@@ -1694,11 +1694,25 @@ export const AgentStudio: React.FC<AgentStudioProps> = ({
       />
 
       {/* Swiss Command Help Modal (/help) */}
-      {showHelpModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-xs select-none font-mono text-xs animate-fadeIn">
-          <div className="w-full max-w-2xl bg-omp-surface border border-omp-border rounded-[2px] shadow-2xl flex flex-col max-h-[85vh] overflow-hidden">
-            <div className="px-5 py-3 border-b border-omp-border flex items-center justify-between bg-omp-surface">
-              <div className="flex items-center space-x-2.5">
+      <div
+        className={`fixed inset-0 z-50 flex items-center justify-center p-4 select-none font-mono text-xs transition-all duration-200 ease-out ${
+          showHelpModal ? 'pointer-events-auto visible opacity-100' : 'pointer-events-none invisible opacity-0'
+        }`}
+      >
+        <div
+          onClick={() => setShowHelpModal(false)}
+          className={`absolute inset-0 bg-black/75 backdrop-blur-xs transition-opacity duration-200 ease-out ${
+            showHelpModal ? 'opacity-100' : 'opacity-0'
+          }`}
+        />
+        <div
+          onClick={(e) => e.stopPropagation()}
+          className={`relative w-full max-w-2xl bg-omp-surface border border-omp-border rounded-[2px] shadow-2xl flex flex-col max-h-[85vh] overflow-hidden transition-all duration-200 ease-out transform ${
+            showHelpModal ? 'scale-100 opacity-100 translate-y-0' : 'scale-95 opacity-0 translate-y-2'
+          }`}
+        >
+          <div className="px-5 py-3 border-b border-omp-border flex items-center justify-between bg-omp-surface">
+            <div className="flex items-center space-x-2.5">
                 <div className="w-6 h-6 bg-omp-accent flex items-center justify-center font-bold text-white rounded-[2px]">
                   <Rune name="code-terminal" size={13} />
                 </div>
@@ -1755,8 +1769,7 @@ export const AgentStudio: React.FC<AgentStudioProps> = ({
             </div>
           </div>
         </div>
-      )}
-    </div>
+      </div>
   );
 };
 

@@ -104,15 +104,28 @@ export const ParametersDialog: React.FC<ParametersDialogProps> = ({
   onToggleAdvisor,
 }) => {
   const [activeTab, setActiveTab] = useState<'thinking' | 'flags'>('thinking');
-
-  if (!isOpen) return null;
-
   const validThinkingLevels = getAvailableThinkingLevels(selectedModel);
 
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-xs animate-fadeIn select-none font-mono text-xs">
-      <div 
-        className="w-full max-w-2xl bg-omp-surface border border-omp-border rounded-[2px] shadow-2xl overflow-hidden flex flex-col max-h-[85vh] animate-scaleIn"
+    <div
+      className={`fixed inset-0 z-50 flex items-center justify-center p-4 select-none font-mono text-xs transition-all duration-200 ease-out ${
+        isOpen ? 'pointer-events-auto visible opacity-100' : 'pointer-events-none invisible opacity-0'
+      }`}
+    >
+      {/* Backdrop */}
+      <div
+        onClick={onClose}
+        className={`absolute inset-0 bg-black/75 backdrop-blur-xs transition-opacity duration-200 ease-out ${
+          isOpen ? 'opacity-100' : 'opacity-0'
+        }`}
+      />
+
+      {/* Modal Dialog */}
+      <div
+        className={`relative w-full max-w-2xl bg-omp-surface border border-omp-border rounded-[2px] shadow-2xl overflow-hidden flex flex-col max-h-[85vh] transition-all duration-200 ease-out transform ${
+          isOpen ? 'scale-100 opacity-100 translate-y-0' : 'scale-95 opacity-0 translate-y-2'
+        }`}
         onClick={(e) => e.stopPropagation()}
       >
         {/* Modal Header */}

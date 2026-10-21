@@ -170,12 +170,16 @@ export const WorkspaceSessionsSidebar: React.FC<WorkspaceSessionsSidebarProps> =
     }
   };
 
-  if (!isOpen) {
-    return null;
-  }
-
   return (
-    <aside className="w-72 sm:w-80 h-full border-r border-omp-border bg-omp-surface flex flex-col select-none shrink-0 z-30 font-sans transition-all duration-200">
+    <aside
+      className={`h-full bg-omp-surface flex flex-col select-none shrink-0 z-30 font-sans transition-all duration-300 ease-in-out ${
+        isOpen
+          ? 'w-72 sm:w-80 opacity-100 border-r border-omp-border translate-x-0'
+          : 'w-0 opacity-0 border-r-0 -translate-x-4 overflow-hidden pointer-events-none'
+      }`}
+    >
+      <div className="w-72 sm:w-80 h-full flex flex-col overflow-hidden">
+
       {/* Top Header */}
       <div className="h-11 px-3 border-b border-omp-border flex items-center justify-between bg-omp-surface shrink-0">
         <div className="flex items-center space-x-2">
@@ -334,6 +338,7 @@ export const WorkspaceSessionsSidebar: React.FC<WorkspaceSessionsSidebarProps> =
       <div className="p-2 border-t border-omp-border bg-omp-surface text-[10px] text-omp-muted font-mono flex items-center justify-between shrink-0">
         <span>{sessions.length} Toplam Oturum</span>
         <span className="text-omp-accent">~/.omp/agent</span>
+      </div>
       </div>
     </aside>
   );

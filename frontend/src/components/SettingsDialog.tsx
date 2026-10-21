@@ -399,12 +399,25 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({
     setTimeout(() => setCopiedKey(null), 1500);
   };
 
-  if (!isOpen) return null;
-
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-fadeIn">
-      <div 
-        className="w-full max-w-5xl bg-omp-surface border border-omp-border rounded-[2px] shadow-2xl flex flex-col h-[85vh] overflow-hidden font-mono text-xs animate-scaleIn"
+    <div
+      className={`fixed inset-0 z-50 flex items-center justify-center p-4 transition-all duration-200 ease-out ${
+        isOpen ? 'pointer-events-auto visible opacity-100' : 'pointer-events-none invisible opacity-0'
+      }`}
+    >
+      {/* Backdrop */}
+      <div
+        onClick={onClose}
+        className={`absolute inset-0 bg-black/75 backdrop-blur-xs transition-opacity duration-200 ease-out ${
+          isOpen ? 'opacity-100' : 'opacity-0'
+        }`}
+      />
+
+      {/* Modal Dialog */}
+      <div
+        className={`relative w-full max-w-5xl bg-omp-surface border border-omp-border rounded-[2px] shadow-2xl flex flex-col h-[85vh] overflow-hidden font-mono text-xs transition-all duration-200 ease-out transform ${
+          isOpen ? 'scale-100 opacity-100 translate-y-0' : 'scale-95 opacity-0 translate-y-2'
+        }`}
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}

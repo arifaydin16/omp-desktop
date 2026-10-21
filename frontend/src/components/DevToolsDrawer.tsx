@@ -22,7 +22,6 @@ export const DevToolsDrawer: React.FC<DevToolsDrawerProps> = ({
   const [skillQuery, setSkillQuery] = useState('');
   const [tokenInput, setTokenInput] = useState('');
 
-  if (!isOpen) return null;
 
   const handleRunGitStatus = async () => {
     setLoading(true);
@@ -118,7 +117,26 @@ export const DevToolsDrawer: React.FC<DevToolsDrawerProps> = ({
   };
 
   return (
-    <div className="fixed inset-y-0 right-0 z-40 w-[540px] bg-omp-surface border-l border-omp-border shadow-2xl flex flex-col font-mono text-xs">
+    <div
+      className={`fixed inset-0 z-50 transition-all duration-300 ease-out ${
+        isOpen ? 'pointer-events-auto visible opacity-100' : 'pointer-events-none invisible opacity-0 delay-200'
+      }`}
+    >
+      {/* Backdrop */}
+      <div
+        onClick={onClose}
+        className={`absolute inset-0 bg-black/60 backdrop-blur-xs transition-opacity duration-300 ease-out ${
+          isOpen ? 'opacity-100' : 'opacity-0'
+        }`}
+      />
+
+      {/* Sliding Drawer Panel */}
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className={`absolute inset-y-0 right-0 w-[540px] max-w-full bg-omp-surface border-l border-omp-border shadow-2xl flex flex-col font-mono text-xs transition-transform duration-300 cubic-bezier(0.16, 1, 0.3, 1) ${
+          isOpen ? 'translate-x-0' : 'translate-x-full'
+        }`}
+      >
       {/* Header */}
       <div className="h-12 border-b border-omp-border px-4 flex items-center justify-between select-none bg-omp-surface">
         <div className="flex items-center space-x-2">
@@ -347,6 +365,7 @@ export const DevToolsDrawer: React.FC<DevToolsDrawerProps> = ({
             {output || 'Komut çalıştırmak için yukarıdaki butonları kullanın.'}
           </pre>
         </div>
+      </div>
       </div>
     </div>
   );

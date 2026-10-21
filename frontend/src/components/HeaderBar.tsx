@@ -309,9 +309,23 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
           </button>
 
           {/* Update Modal */}
-          {showUpdateModal && (
-            <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-xs flex items-center justify-center p-4">
-              <div className="bg-omp-surface border border-omp-border rounded-[2px] w-full max-w-md p-5 shadow-2xl">
+          <div
+            className={`fixed inset-0 z-50 flex items-center justify-center p-4 transition-all duration-200 ease-out ${
+              showUpdateModal ? 'pointer-events-auto visible opacity-100' : 'pointer-events-none invisible opacity-0'
+            }`}
+          >
+            <div
+              onClick={() => setShowUpdateModal(false)}
+              className={`absolute inset-0 bg-black/75 backdrop-blur-xs transition-opacity duration-200 ease-out ${
+                showUpdateModal ? 'opacity-100' : 'opacity-0'
+              }`}
+            />
+            <div
+              onClick={(e) => e.stopPropagation()}
+              className={`relative bg-omp-surface border border-omp-border rounded-[2px] w-full max-w-md p-5 shadow-2xl transition-all duration-200 ease-out transform ${
+                showUpdateModal ? 'scale-100 opacity-100 translate-y-0' : 'scale-95 opacity-0 translate-y-2'
+              }`}
+            >
                 <div className="flex items-center justify-between pb-3 border-b border-omp-border">
                   <div className="flex items-center space-x-2">
                     <Rune name="schedule-refresh-cw" size={16} className="text-omp-accent" />
@@ -396,9 +410,8 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
                     </button>
                   </div>
                 </div>
-              </div>
             </div>
-          )}
+          </div>
         </div>
 
         {/* Theme Selector Popover */}

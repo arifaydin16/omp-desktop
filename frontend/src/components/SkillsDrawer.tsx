@@ -171,12 +171,25 @@ export const SkillsDrawer: React.FC<SkillsDrawerProps> = ({
     setTimeout(() => setCopied(false), 1500);
   };
 
-  if (!isOpen) return null;
-
   return (
-    <div className="fixed inset-0 z-50 flex justify-end bg-black/75 backdrop-blur-xs animate-fadeIn font-mono text-xs">
-      <div 
-        className="w-full max-w-5xl bg-omp-surface border-l border-omp-border shadow-2xl flex flex-col h-full animate-slideLeft"
+    <div
+      className={`fixed inset-0 z-50 flex justify-end transition-all duration-300 ease-out font-mono text-xs ${
+        isOpen ? 'pointer-events-auto visible opacity-100' : 'pointer-events-none invisible opacity-0 delay-200'
+      }`}
+    >
+      {/* Backdrop */}
+      <div
+        onClick={onClose}
+        className={`absolute inset-0 bg-black/75 backdrop-blur-xs transition-opacity duration-300 ease-out ${
+          isOpen ? 'opacity-100' : 'opacity-0'
+        }`}
+      />
+
+      {/* Drawer Panel Sliding */}
+      <div
+        className={`relative w-full max-w-5xl bg-omp-surface border-l border-omp-border shadow-2xl flex flex-col h-full transition-transform duration-300 cubic-bezier(0.16, 1, 0.3, 1) ${
+          isOpen ? 'translate-x-0' : 'translate-x-full'
+        }`}
         onClick={(e) => e.stopPropagation()}
       >
         {/* Drawer Header */}
