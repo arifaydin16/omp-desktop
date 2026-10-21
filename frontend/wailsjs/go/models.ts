@@ -10,6 +10,7 @@ export namespace omp {
 	    approvalMode: string;
 	    autoApprove: boolean;
 	    goalMode: boolean;
+	    loopMode: boolean;
 	    planYolo: boolean;
 	    prewalk: boolean;
 	    advisor: boolean;
@@ -33,6 +34,7 @@ export namespace omp {
 	        this.approvalMode = source["approvalMode"];
 	        this.autoApprove = source["autoApprove"];
 	        this.goalMode = source["goalMode"];
+	        this.loopMode = source["loopMode"];
 	        this.planYolo = source["planYolo"];
 	        this.prewalk = source["prewalk"];
 	        this.advisor = source["advisor"];

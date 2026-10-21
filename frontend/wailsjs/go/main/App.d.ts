@@ -23,6 +23,8 @@ export function GetAuthCredentials():Promise<Array<omp.AuthCredentialItem>>;
 
 export function GetBinaryInfo():Promise<Record<string, string>>;
 
+export function GetChangelog(arg1:string):Promise<string>;
+
 export function GetConfig():Promise<Record<string, any>>;
 
 export function GetConfigKey(arg1:string):Promise<string>;

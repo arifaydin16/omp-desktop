@@ -365,3 +365,8 @@ func (a *App) LogoutProvider(provider string) error {
 func (a *App) OpenBrowserURL(url string) error {
 	return a.ompService.OpenBrowserURL(url)
 }
+
+// GetChangelog reads and returns changelog entries
+func (a *App) GetChangelog(args string) (string, error) {
+	return a.ompService.GetChangelog(args)
+}

@@ -71,6 +71,8 @@ interface ParametersDialogProps {
   onToggleAutoApprove: (v: boolean) => void;
   goalMode: boolean;
   onToggleGoalMode: (v: boolean) => void;
+  loopMode?: boolean;
+  onToggleLoopMode?: (v: boolean) => void;
   planYolo: boolean;
   onTogglePlanYolo: (v: boolean) => void;
   prewalk: boolean;
@@ -97,6 +99,8 @@ export const ParametersDialog: React.FC<ParametersDialogProps> = ({
   onToggleAutoApprove,
   goalMode,
   onToggleGoalMode,
+  loopMode = false,
+  onToggleLoopMode,
   planYolo,
   onTogglePlanYolo,
   prewalk,
@@ -273,6 +277,24 @@ export const ParametersDialog: React.FC<ParametersDialogProps> = ({
                   </div>
                   <p className="text-[11px] text-omp-muted mt-0.5 font-sans leading-relaxed">
                     Ajanı taze bir oturumda hedef odaklı başlatır, testler geçene kadar otonom döngü kurar.
+                  </p>
+                </div>
+              </label>
+
+              <label className="flex items-start space-x-3 p-3 rounded-[2px] border border-omp-border bg-omp-bg hover:border-omp-accent cursor-pointer transition">
+                <input
+                  type="checkbox"
+                  checked={loopMode}
+                  onChange={(e) => onToggleLoopMode && onToggleLoopMode(e.target.checked)}
+                  className="mt-0.5 w-4 h-4 rounded-[2px] bg-omp-surface border-omp-border text-omp-accent focus:ring-0"
+                />
+                <div>
+                  <div className="font-bold text-white uppercase text-xs flex items-center space-x-1.5">
+                    <span>DÖNGÜ MODU (/LOOP)</span>
+                    {loopMode && <span className="px-1.5 py-0.2 rounded-[2px] bg-emerald-500/20 text-emerald-300 text-[9px]">AKTİF</span>}
+                  </div>
+                  <p className="text-[11px] text-omp-muted mt-0.5 font-sans leading-relaxed">
+                    Ajan her yanıt verip durduğunda (yield), promptu otomatik olarak yeniden göndererek kesintisiz döngüde çalışır.
                   </p>
                 </div>
               </label>

@@ -19,7 +19,7 @@ const BADGE_PALETTES = [
 ];
 
 // Regex matching image tokens [#N], bracketed commands [/cmd], or leading slash commands
-const TOKEN_SPLIT_REGEX = /(\[#\d+\]|\[\/(?:[a-zA-Z0-9_:-]+)\]|^\/(?:skill:[a-zA-Z0-9_-]+|(?:compact|clear|new|model|usage|stats|advisor|resume|skills|settings|devtools|help|changelog|loop|btw)(?::[a-zA-Z0-9_-]+)?)(?:\s|$))/;
+const TOKEN_SPLIT_REGEX = /(\[#\d+\]|\[\/(?:[a-zA-Z0-9_:-]+)\]|^\/(?:skill:[a-zA-Z0-9_-]+|[a-zA-Z0-9_-]+(?::[a-zA-Z0-9_:-]+)?)(?:\s|$))/;
 
 /**
  * Extracts plain text from the contentEditable element, serializing
@@ -172,7 +172,7 @@ export const BadgePromptInput: React.FC<BadgePromptInputProps> = ({
       if (!part) return;
 
       const imageMatch = part.match(/^\[(#[0-9]+)\]$/);
-      const isCommand = part.match(/^\[?\/(?:skill:[a-zA-Z0-9_-]+|(?:compact|clear|new|model|usage|stats|advisor|resume|skills|settings|devtools|help|changelog|loop|btw)(?::[a-zA-Z0-9_-]+)?)\]?(?:\s|$)/);
+      const isCommand = part.match(/^\[?\/(?:skill:[a-zA-Z0-9_-]+|[a-zA-Z0-9_-]+(?::[a-zA-Z0-9_:-]+)?)\]?(?:\s|$)/);
 
       if (imageMatch) {
         const badge = createImageBadgeElement(imageMatch[1]);

@@ -39,6 +39,7 @@ type AgentRunOptions struct {
 	ApprovalMode  string   `json:"approvalMode"`
 	AutoApprove   bool     `json:"autoApprove"`
 	GoalMode      bool     `json:"goalMode"`
+	LoopMode      bool     `json:"loopMode"`
 	PlanYolo      bool     `json:"planYolo"`
 	Prewalk       bool     `json:"prewalk"`
 	Advisor       bool     `json:"advisor"`
@@ -1569,4 +1570,76 @@ func (s *Service) OpenBrowserURL(url string) error {
 		runtime.BrowserOpenURL(s.ctx, strings.TrimSpace(url))
 	}
 	return nil
+}
+
+// GetChangelog reads and returns changelog content based on args ("full", "last [N]", or recent)
+func (s *Service) GetChangelog(args string) (string, error) {
+	candidates := []string{
+		filepath.Join("oh-my-pi", "packages", "coding-agent", "CHANGELOG.md"),
+		filepath.Join("..", "oh-my-pi", "packages", "coding-agent", "CHANGELOG.md"),
+		filepath.Join("packages", "coding-agent", "CHANGELOG.md"),
+		"CHANGELOG.md",
+	}
+
+	homeDir, _ := os.UserHomeDir()
+	if homeDir != "" {
+		candidates = append(candidates,
+			filepath.Join(homeDir, ".omp", "CHANGELOG.md"),
+			filepath.Join(homeDir, "AppData", "Local", "omp", "CHANGELOG.md"),
+		)
+	}
+
+	var content string
+	for _, p := range candidates {
+		if data, err := os.ReadFile(p); err == nil && len(data) > 0 {
+			content = string(data)
+			break
+		}
+	}
+
+	if content == "" {
+		return "# Changelog\n\nChangelog dosyası bulunamadı.", nil
+	}
+
+	args = strings.TrimSpace(strings.ToLower(args))
+	if args == "full" {
+		return content, nil
+	}
+
+	// Split into releases by "## ["
+	sections := strings.Split(content, "## [")
+	if len(sections) <= 1 {
+		return content, nil
+	}
+
+	header := sections[0]
+	releases := sections[1:]
+
+	limit := 3 // default recent
+	if strings.HasPrefix(args, "last") {
+		parts := strings.Fields(args)
+		if len(parts) >= 2 {
+			var n int
+			if _, err := fmt.Sscanf(parts[1], "%d", &n); err == nil && n > 0 {
+				limit = n
+			} else {
+				limit = 1
+			}
+		} else {
+			limit = 1
+		}
+	}
+
+	if limit > len(releases) {
+		limit = len(releases)
+	}
+
+	var sb strings.Builder
+	sb.WriteString(header)
+	for _, release := range releases[:limit] {
+		sb.WriteString("## [")
+		sb.WriteString(release)
+	}
+
+	return sb.String(), nil
 }

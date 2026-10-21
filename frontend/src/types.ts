@@ -8,6 +8,7 @@ export interface AgentRunOptions {
   approvalMode: string;
   autoApprove: boolean;
   goalMode: boolean;
+  loopMode: boolean;
   planYolo: boolean;
   prewalk: boolean;
   advisor: boolean;

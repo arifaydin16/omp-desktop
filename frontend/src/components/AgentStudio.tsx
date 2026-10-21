@@ -5,6 +5,7 @@ import { splitThinkingAndResponse } from '../utils/textParser';
 import { ParametersDialog } from './ParametersDialog';
 import { RoleAssignmentModal } from './RoleAssignmentModal';
 import { BadgePromptInput } from './BadgePromptInput';
+import { ChangelogModal } from './ChangelogModal';
 import * as AppApi from '../../wailsjs/go/main/App';
 
 interface AgentStudioProps {
@@ -125,9 +126,12 @@ export const AgentStudio: React.FC<AgentStudioProps> = ({
   const [approvalMode, setApprovalMode] = useState('write');
   const [autoApprove, setAutoApprove] = useState(false);
   const [goalMode, setGoalMode] = useState(false);
+  const [loopMode, setLoopMode] = useState(false);
   const [planYolo, setPlanYolo] = useState(false);
   const [prewalk, setPrewalk] = useState(false);
   const [advisor, setAdvisor] = useState(false);
+  const [showChangelogModal, setShowChangelogModal] = useState(false);
+  const [changelogArg, setChangelogArg] = useState<'recent' | 'full'>('recent');
   const [copiedId, setCopiedId] = useState<string | null>(null);
   // Slash Command Autocomplete State
   const [skillsList, setSkillsList] = useState<Array<{ name: string; description: string }>>([]);
@@ -381,85 +385,212 @@ export const AgentStudio: React.FC<AgentStudioProps> = ({
   }
 
   const baseCommands: CommandItem[] = useMemo(() => [
+    // Skills & Custom Skills
     {
       id: 'skill',
       name: 'skill:',
       fullCmd: '/skill:',
       glyph: '✦',
-      glyphColor: 'text-cyan-400',
-      description: `${skillsList.length || 31} skills`,
+      glyphColor: 'text-cyan-400 font-bold',
+      description: `${skillsList.length || 31} yerleşik ve özel beceri kütüphanesi`,
+    },
+
+    // Modes & Autonomous Objectives
+    {
+      id: 'goal',
+      name: 'goal',
+      fullCmd: '/goal',
+      glyph: '🎯',
+      glyphColor: 'text-amber-400 font-bold',
+      description: `Hedef Modu: ${goalMode ? 'Açık' : 'Kapalı'} (/goal [set|show|pause|resume|drop|budget])`,
     },
     {
-      id: 'compact',
-      name: 'compact',
-      fullCmd: '/compact',
-      glyph: 'G',
-      glyphColor: 'text-purple-400 font-bold',
-      description: 'Compact: context summary',
-    },
-    {
-      id: 'usage',
-      name: 'usage',
-      fullCmd: '/usage',
-      glyph: '⚡',
+      id: 'guided-goal',
+      name: 'guided-goal',
+      fullCmd: '/guided-goal',
+      glyph: '🧭',
       glyphColor: 'text-amber-400',
-      description: 'Show provider usage and limits',
-    },
-    {
-      id: 'btw',
-      name: 'btw',
-      fullCmd: '/btw',
-      glyph: '?',
-      glyphColor: 'text-red-400 font-bold',
-      description: "Ask a side question, or browse this session's BTW history",
-    },
-    {
-      id: 'model',
-      name: 'model',
-      fullCmd: '/model',
-      glyph: '⬡',
-      glyphColor: 'text-blue-400',
-      description: `Model: ${selectedModel.split('/').pop() || 'gemini-3.8-flash'}`,
-    },
-    {
-      id: 'resume',
-      name: 'resume',
-      fullCmd: '/resume',
-      glyph: '🕒',
-      glyphColor: 'text-zinc-300',
-      description: 'Resume a different session',
-    },
-    {
-      id: 'changelog',
-      name: 'changelog',
-      fullCmd: '/changelog',
-      glyph: '📰',
-      glyphColor: 'text-zinc-300',
-      description: 'Show changelog entries',
-    },
-    {
-      id: 'advisor',
-      name: 'advisor',
-      fullCmd: '/advisor',
-      glyph: '👁',
-      glyphColor: 'text-rose-400',
-      description: `Advisor: ${advisor ? 'on' : 'off'} (${selectedModel.split('/').pop() || ''})`,
+      description: 'Ajan sohbetle mülakat yaparak hedef modunu yapılandırır (/guided-goal [hedef])',
     },
     {
       id: 'loop',
       name: 'loop',
       fullCmd: '/loop',
       glyph: '↺',
-      glyphColor: 'text-emerald-400',
-      description: 'Loop: off',
+      glyphColor: 'text-emerald-400 font-bold',
+      description: `Döngü Modu: ${loopMode ? 'Açık' : 'Kapalı'} (/loop [adet|süre] [--while|--until '<cmd>'])`,
     },
     {
-      id: 'new',
-      name: 'new',
-      fullCmd: '/new',
-      glyph: '+',
-      glyphColor: 'text-emerald-400 font-bold text-sm',
-      description: 'Start a new session',
+      id: 'plan',
+      name: 'plan',
+      fullCmd: '/plan',
+      glyph: '📋',
+      glyphColor: 'text-blue-400 font-bold',
+      description: `Plan Modu: ${planYolo ? 'Açık' : 'Kapalı'} (Yürütmeden önce mimari planlama yapar)`,
+    },
+    {
+      id: 'plan-review',
+      name: 'plan-review',
+      fullCmd: '/plan-review',
+      glyph: '🔍',
+      glyphColor: 'text-blue-300',
+      description: 'En son oluşturulan plan için plan inceleme arayüzünü yeniden açar',
+    },
+    {
+      id: 'vibe',
+      name: 'vibe',
+      fullCmd: '/vibe',
+      glyph: '🌊',
+      glyphColor: 'text-cyan-400',
+      description: 'Vibe modu: Hızlı, doğrudan salt-okunur araç setiyle kalıcı oturum',
+    },
+    {
+      id: 'security',
+      name: 'security',
+      fullCmd: '/security',
+      glyph: '🛡',
+      glyphColor: 'text-rose-400 font-bold',
+      description: 'OMP yerel güvenlik taramaları (/security plan|scan|status|scans|show|import)',
+    },
+
+    // Model & Reasoning Effort
+    {
+      id: 'model',
+      name: 'model',
+      fullCmd: '/model',
+      glyph: '⬡',
+      glyphColor: 'text-blue-400',
+      description: `Model Seçimi: ${selectedModel.split('/').pop() || 'gemini-3.8-flash'} (/model [isim])`,
+    },
+    {
+      id: 'switch',
+      name: 'switch',
+      fullCmd: '/switch',
+      glyph: '⇄',
+      glyphColor: 'text-indigo-400',
+      description: 'Yalnızca bu oturum için geçici model değiştirir (/switch [model])',
+    },
+    {
+      id: 'modelpreset',
+      name: 'modelpreset',
+      fullCmd: '/modelpreset',
+      glyph: '★',
+      glyphColor: 'text-amber-300',
+      description: 'Model rol ve düşünme profillerini kaydet ve yönet (/modelpreset list|save|switch|delete)',
+    },
+    {
+      id: 'effort',
+      name: 'effort',
+      fullCmd: '/effort',
+      glyph: '⚡',
+      glyphColor: 'text-amber-400',
+      description: `Düşünme Seviyesi: ${thinkingLevel} (/effort off|minimal|low|medium|high|max|auto)`,
+    },
+    {
+      id: 'fast',
+      name: 'fast',
+      fullCmd: '/fast',
+      glyph: '⚡',
+      glyphColor: 'text-amber-300 font-bold',
+      description: 'Hızlı servis katmanını aç/kapat (/fast on|ultra|off|status)',
+    },
+    {
+      id: 'slow',
+      name: 'slow',
+      fullCmd: '/slow',
+      glyph: '⏳',
+      glyphColor: 'text-blue-300',
+      description: 'Yavaş / flex servis katmanını aç/kapat (/slow on|off|status)',
+    },
+    {
+      id: 'extended-context',
+      name: 'extended-context',
+      fullCmd: '/extended-context',
+      glyph: '⤢',
+      glyphColor: 'text-purple-300',
+      description: 'Genişletilmiş bağlam pencerelerini aç/kapat (/extended-context on|off|status)',
+    },
+    {
+      id: 'computer',
+      name: 'computer',
+      fullCmd: '/computer',
+      glyph: '🖥',
+      glyphColor: 'text-zinc-300',
+      description: 'Masaüstü ve ekran etkileşim preludünü aç/kapat (/computer on|off|status)',
+    },
+    {
+      id: 'skillful',
+      name: 'skillful',
+      fullCmd: '/skillful',
+      glyph: '✦',
+      glyphColor: 'text-cyan-300',
+      description: 'Sistem promptunda becerilerin listelenmesini yönet (/skillful on|off|status)',
+    },
+    {
+      id: 'prewalk',
+      name: 'prewalk',
+      fullCmd: '/prewalk',
+      glyph: '🚶',
+      glyphColor: 'text-emerald-400',
+      description: 'Plan sonrası hafif modele tek seferlik geçiş handoffunu kur/iptal et (/prewalk restart|off)',
+    },
+    {
+      id: 'ratchet',
+      name: 'ratchet',
+      fullCmd: '/ratchet',
+      glyph: '⚙',
+      glyphColor: 'text-indigo-400',
+      description: 'LLM akışları için eval oluştur ve hillclimbing çalıştır (/ratchet [hedef])',
+    },
+    {
+      id: 'advisor',
+      name: 'advisor',
+      fullCmd: '/advisor',
+      glyph: '👁',
+      glyphColor: 'text-rose-400 font-bold',
+      description: `Pasif Danışman: ${advisor ? 'Açık' : 'Kapalı'} (/advisor on|off|status|dump)`,
+    },
+
+    // Context & Session Compaction
+    {
+      id: 'compact',
+      name: 'compact',
+      fullCmd: '/compact',
+      glyph: 'G',
+      glyphColor: 'text-purple-400 font-bold',
+      description: 'Konuşma bağlamını sıkıştırır (/compact [odak yönergeleri])',
+    },
+    {
+      id: 'shake',
+      name: 'shake',
+      fullCmd: '/shake',
+      glyph: '📳',
+      glyphColor: 'text-purple-300',
+      description: 'Ağır araç sonuçlarını ve görselleri bağlamdan sallar (/shake elide|images|thinking)',
+    },
+    {
+      id: 'handoff',
+      name: 'handoff',
+      fullCmd: '/handoff',
+      glyph: '🤝',
+      glyphColor: 'text-emerald-300',
+      description: 'Oturumu bir handoff belgesine özetleyip yerinde sıkıştırır (/handoff [odak])',
+    },
+    {
+      id: 'seance',
+      name: 'seance',
+      fullCmd: '/seance',
+      glyph: '👻',
+      glyphColor: 'text-purple-300',
+      description: 'Geçmiş oturum ve alt ajan transkriptlerine danışır (/seance [oturum-id])',
+    },
+    {
+      id: 'fresh',
+      name: 'fresh',
+      fullCmd: '/fresh',
+      glyph: '↻',
+      glyphColor: 'text-teal-400 font-bold',
+      description: 'Transkripti değiştirmeden model sağlayıcı yayın durumunu sıfırlar',
     },
     {
       id: 'clear',
@@ -467,49 +598,435 @@ export const AgentStudio: React.FC<AgentStudioProps> = ({
       fullCmd: '/clear',
       glyph: '🗑',
       glyphColor: 'text-red-400',
-      description: 'Clear conversation messages',
+      description: 'Mevcut sohbet mesajlarını temizler',
+    },
+    {
+      id: 'new',
+      name: 'new',
+      fullCmd: '/new',
+      glyph: '+',
+      glyphColor: 'text-emerald-400 font-bold text-sm',
+      description: 'Temiz ve yeni bir oturum başlatır',
+    },
+    {
+      id: 'delete',
+      name: 'delete',
+      fullCmd: '/delete',
+      glyph: '✕',
+      glyphColor: 'text-red-500 font-bold',
+      description: 'Mevcut oturumu diskten siler ve yeni bir oturum açar',
+    },
+
+    // Session Management & Multi-root
+    {
+      id: 'resume',
+      name: 'resume',
+      fullCmd: '/resume',
+      glyph: '🕒',
+      glyphColor: 'text-zinc-300',
+      description: 'Kayıtlı oturumlar listesini açar veya oturuma döner (/resume [id|@claude|@codex])',
+    },
+    {
+      id: 'pin',
+      name: 'pin',
+      fullCmd: '/pin',
+      glyph: '📌',
+      glyphColor: 'text-amber-400',
+      description: 'Oturumu devam listesinin en tepesine sabitler (/pin [oturum-id])',
+    },
+    {
+      id: 'rename',
+      name: 'rename',
+      fullCmd: '/rename',
+      glyph: '✏',
+      glyphColor: 'text-zinc-300',
+      description: 'Oturumun başlığını yeniden adlandırır (/rename [başlık])',
+    },
+    {
+      id: 'move',
+      name: 'move',
+      fullCmd: '/move',
+      glyph: '📁',
+      glyphColor: 'text-blue-400',
+      description: 'Mevcut oturumu farklı bir dizine taşır (/move <dizin-yolu>)',
+    },
+    {
+      id: 'wt',
+      name: 'wt',
+      fullCmd: '/wt',
+      glyph: '🌿',
+      glyphColor: 'text-emerald-400',
+      description: 'Oturumu yeni bir git worktree içine taşır (/wt [dal-adı])',
+    },
+    {
+      id: 'add-dir',
+      name: 'add-dir',
+      fullCmd: '/add-dir',
+      glyph: '📂',
+      glyphColor: 'text-blue-300',
+      description: 'Oturuma ek bir çalışma dizini ekler (Multi-root: /add-dir <yol>)',
+    },
+    {
+      id: 'remove-dir',
+      name: 'remove-dir',
+      fullCmd: '/remove-dir',
+      glyph: '📁',
+      glyphColor: 'text-red-400',
+      description: 'Ek çalışma dizinini oturumdan kaldırır (/remove-dir <yol>)',
+    },
+    {
+      id: 'dirs',
+      name: 'dirs',
+      fullCmd: '/dirs',
+      glyph: '🗂',
+      glyphColor: 'text-zinc-300',
+      description: 'Oturumun aktif tüm çalışma dizinlerini listeler',
+    },
+    {
+      id: 'session',
+      name: 'session',
+      fullCmd: '/session',
+      glyph: '📋',
+      glyphColor: 'text-zinc-300',
+      description: 'Oturum detayları, hesap sabitleme ve temizleme (/session info|delete|pin)',
+    },
+
+    // Telemetry, Limits & Changelog
+    {
+      id: 'usage',
+      name: 'usage',
+      fullCmd: '/usage',
+      glyph: '⚡',
+      glyphColor: 'text-amber-400 font-bold',
+      description: 'Canlı model kotalarını ve hız sınırlarını görüntüler (/usage [show|reset])',
     },
     {
       id: 'stats',
       name: 'stats',
       fullCmd: '/stats',
-      glyph: '⚡',
+      glyph: '📊',
       glyphColor: 'text-amber-400',
-      description: 'View usage statistics and quota telemetry',
+      description: 'Detaylı kullanım istatistikleri ve telemetri paneli (/stats)',
     },
     {
-      id: 'skills',
-      name: 'skills',
-      fullCmd: '/skills',
-      glyph: '✦',
+      id: 'changelog',
+      name: 'changelog',
+      fullCmd: '/changelog',
+      glyph: '📰',
+      glyphColor: 'text-emerald-400 font-bold',
+      description: 'oh-my-pi resmi sürüm notları ve değişiklik geçmişi (/changelog [full|last N])',
+    },
+    {
+      id: 'context',
+      name: 'context',
+      fullCmd: '/context',
+      glyph: '📏',
+      glyphColor: 'text-purple-400',
+      description: 'Mevcut konuşma token ve bağlam kullanım dökümünü gösterir',
+    },
+    {
+      id: 'tools',
+      name: 'tools',
+      fullCmd: '/tools',
+      glyph: '🛠',
       glyphColor: 'text-cyan-400',
-      description: 'Open skills inventory and custom skill editor',
+      description: 'Ajana görünür ve etkin olan tüm araçları listeler',
     },
     {
-      id: 'settings',
-      name: 'settings',
-      fullCmd: '/settings',
+      id: 'jobs',
+      name: 'jobs',
+      fullCmd: '/jobs',
       glyph: '⚙',
       glyphColor: 'text-zinc-300',
-      description: 'Open system settings and provider login (/login)',
+      description: 'Arka plan asenkron görev durumlarını listeler (/jobs [full|kill <id>])',
+    },
+
+    // Developer Tools & Execution
+    {
+      id: 'cleanse',
+      name: 'cleanse',
+      fullCmd: '/cleanse',
+      glyph: '🩺',
+      glyphColor: 'text-emerald-400',
+      description: 'Paralel subagentlar ile projedeki tüm derleme ve tip hatalarını temizler',
     },
     {
       id: 'devtools',
       name: 'devtools',
       fullCmd: '/devtools',
       glyph: '⌘',
+      glyphColor: 'text-zinc-300 font-bold',
+      description: 'Geliştirici araçları çekmecesini açar (Git, Ps, Cleanse)',
+    },
+    {
+      id: 'tan',
+      name: 'tan',
+      fullCmd: '/tan',
+      glyph: '🚀',
+      glyphColor: 'text-orange-400',
+      description: 'Teğetsel bir yan iş için tam arka plan ajanı çalıştırır (/tan <görev>)',
+    },
+    {
+      id: 'omfg',
+      name: 'omfg',
+      fullCmd: '/omfg',
+      glyph: '⚡',
+      glyphColor: 'text-rose-400',
+      description: 'Sürekli tekrarlayan istenmeyen bir davranışı durdurmak için TTSR kuralı oluşturur',
+    },
+    {
+      id: 'btw',
+      name: 'btw',
+      fullCmd: '/btw',
+      glyph: '?',
+      glyphColor: 'text-red-400 font-bold',
+      description: 'Ana konuşma bağlamını kirletmeden ajana hızlı yan soru sorar (/btw [soru])',
+    },
+    {
+      id: 'queue',
+      name: 'queue',
+      fullCmd: '/queue',
+      glyph: '📥',
+      glyphColor: 'text-indigo-300',
+      description: 'Ajan mevcut yanıtını bitirdiğinde işlenmek üzere mesaj kuyruğa alır',
+    },
+    {
+      id: 'retry',
+      name: 'retry',
+      fullCmd: '/retry',
+      glyph: '↻',
+      glyphColor: 'text-amber-400',
+      description: 'En son başarısız olan ajan adımını yeniden dener',
+    },
+    {
+      id: 'debug',
+      name: 'debug',
+      fullCmd: '/debug',
+      glyph: '🐛',
+      glyphColor: 'text-rose-400',
+      description: 'Hata ayıklama ve debug araçları menüsünü açar',
+    },
+    {
+      id: 'memory',
+      name: 'memory',
+      fullCmd: '/memory',
+      glyph: '🧠',
+      glyphColor: 'text-purple-400',
+      description: 'Kalıcı bellek yönetimi ve senkronizasyonu (/memory view|stats|sync|clear)',
+    },
+
+    // Collaboration & Export
+    {
+      id: 'export',
+      name: 'export',
+      fullCmd: '/export',
+      glyph: '📤',
+      glyphColor: 'text-cyan-400',
+      description: 'Oturumu şık bir HTML dosyasına dışa aktarır (/export [--themes] [yol])',
+    },
+    {
+      id: 'dump',
+      name: 'dump',
+      fullCmd: '/dump',
+      glyph: '📋',
       glyphColor: 'text-zinc-300',
-      description: 'Open developer tools (Git, Ps, Cleanse)',
+      description: 'Konuşma transkriptini panoya kopyalar (/dump [all|anon])',
+    },
+    {
+      id: 'share',
+      name: 'share',
+      fullCmd: '/share',
+      glyph: '🔗',
+      glyphColor: 'text-blue-400',
+      description: 'Oturumu şifreli bir web bağlantısı veya gizli gist ile paylaşır',
+    },
+    {
+      id: 'collab',
+      name: 'collab',
+      fullCmd: '/collab',
+      glyph: '📡',
+      glyphColor: 'text-emerald-400',
+      description: 'Oturumu canlı röle üzerinden paylaşıma açar (/collab start|view|list|stop)',
+    },
+    {
+      id: 'join',
+      name: 'join',
+      fullCmd: '/join',
+      glyph: '⇢',
+      glyphColor: 'text-cyan-400',
+      description: 'Canlı bir ortak çalışma (collab) oturumuna katılır (/join <link>)',
+    },
+    {
+      id: 'leave',
+      name: 'leave',
+      fullCmd: '/leave',
+      glyph: '⇠',
+      glyphColor: 'text-rose-400',
+      description: 'Aktif collab oturumundan ayrılır',
+    },
+    {
+      id: 'trace',
+      name: 'trace',
+      fullCmd: '/trace',
+      glyph: '📈',
+      glyphColor: 'text-indigo-400',
+      description: 'Bu oturumun işlem izini (trace) istatistik panosunda açar',
+    },
+    {
+      id: 'browser',
+      name: 'browser',
+      fullCmd: '/browser',
+      glyph: '🌐',
+      glyphColor: 'text-sky-400',
+      description: 'Tarayıcı eval preludünü başlıksız (headless) veya görünür yapar (/browser headless|visible)',
+    },
+    {
+      id: 'copy',
+      name: 'copy',
+      fullCmd: '/copy',
+      glyph: '📋',
+      glyphColor: 'text-zinc-300',
+      description: 'Konuşmadan kod, komut veya bağlantı kopyalar (/copy [code|cmd|link])',
+    },
+    {
+      id: 'open',
+      name: 'open',
+      fullCmd: '/open',
+      glyph: '↗',
+      glyphColor: 'text-sky-400',
+      description: 'Konuşmadaki son bağlantıyı varsayılan web tarayıcınızda açar',
+    },
+
+    // Marketplace, Plugins & Extensions
+    {
+      id: 'marketplace',
+      name: 'marketplace',
+      fullCmd: '/marketplace',
+      glyph: '🛒',
+      glyphColor: 'text-emerald-400',
+      description: 'Eklenti mağazası kaynaklarını yönet (/marketplace add|list|discover|install)',
+    },
+    {
+      id: 'plugins',
+      name: 'plugins',
+      fullCmd: '/plugins',
+      glyph: '📦',
+      glyphColor: 'text-amber-400',
+      description: 'Yüklü eklentileri listeler ve yönetir (/plugins list|enable|disable)',
+    },
+    {
+      id: 'reload-plugins',
+      name: 'reload-plugins',
+      fullCmd: '/reload-plugins',
+      glyph: '↻',
+      glyphColor: 'text-teal-400',
+      description: 'Tüm eklentileri, becerileri, komutları ve MCP araçlarını yeniden yükler',
+    },
+    {
+      id: 'force',
+      name: 'force',
+      fullCmd: '/force',
+      glyph: '🔨',
+      glyphColor: 'text-rose-400',
+      description: 'Sonraki turu belirli bir aracı kullanmaya zorlar (/force <araç> [prompt])',
+    },
+    {
+      id: 'live',
+      name: 'live',
+      fullCmd: '/live',
+      glyph: '🎙',
+      glyphColor: 'text-rose-400',
+      description: 'Codex destekli gerçek zamanlı sesli modu başlatır',
+    },
+    {
+      id: 'record',
+      name: 'record',
+      fullCmd: '/record',
+      glyph: '⏺',
+      glyphColor: 'text-red-400',
+      description: 'Terminal oturumunu kaydedilebilir bir replay dosyasına kaydeder (omp play)',
+    },
+    {
+      id: 'pause',
+      name: 'pause',
+      fullCmd: '/pause',
+      glyph: '⏸',
+      glyphColor: 'text-amber-400',
+      description: 'Tüm ajanları (ana ajan, subagentlar, danışman) geçici olarak dondurur',
+    },
+    {
+      id: 'forget-approvals',
+      name: 'forget-approvals',
+      fullCmd: '/forget-approvals',
+      glyph: '🔒',
+      glyphColor: 'text-zinc-400',
+      description: 'Hatırlanan tüm dosya ve klasör izin onaylarını sıfırlar',
+    },
+    {
+      id: 'ssh',
+      name: 'ssh',
+      fullCmd: '/ssh',
+      glyph: '🖥',
+      glyphColor: 'text-cyan-400',
+      description: 'SSH sunucu bağlantılarını yönetir (/ssh add|list|remove)',
+    },
+    {
+      id: 'skills',
+      name: 'skills',
+      fullCmd: '/skills',
+      glyph: '✦',
+      glyphColor: 'text-cyan-400 font-bold',
+      description: 'Beceriler kütüphanesini ve özel beceri editörünü açar (/skills search|install)',
+    },
+    {
+      id: 'settings',
+      name: 'settings',
+      fullCmd: '/settings',
+      glyph: '⚙',
+      glyphColor: 'text-zinc-300 font-bold',
+      description: 'Sistem ayarlarını ve sağlayıcı kimlik doğrulamasını (/login) açar',
+    },
+    {
+      id: 'setup',
+      name: 'setup',
+      fullCmd: '/setup',
+      glyph: '⚙',
+      glyphColor: 'text-zinc-300',
+      description: 'Model sağlayıcı ve web arama yapılandırmasını açar (/setup providers)',
+    },
+    {
+      id: 'hotkeys',
+      name: 'hotkeys',
+      fullCmd: '/hotkeys',
+      glyph: '⌨',
+      glyphColor: 'text-zinc-300',
+      description: 'Tüm klavye kısayollarını gösterir',
     },
     {
       id: 'help',
       name: 'help',
       fullCmd: '/help',
       glyph: 'ℹ',
-      glyphColor: 'text-cyan-400',
-      description: 'Show available commands and usage guide',
+      glyphColor: 'text-cyan-400 font-bold',
+      description: 'Tüm komutlar ve kısayollar kılavuzunu görüntüler',
     },
-  ], [skillsList, selectedModel, advisor, goalMode]);
+    {
+      id: 'restart',
+      name: 'restart',
+      fullCmd: '/restart',
+      glyph: '↻',
+      glyphColor: 'text-amber-400',
+      description: 'Uygulamayı mevcut oturumu devam ettirerek yeniden başlatır',
+    },
+    {
+      id: 'exit',
+      name: 'exit',
+      fullCmd: '/exit',
+      glyph: '⏻',
+      glyphColor: 'text-red-400',
+      description: 'Uygulamadan çıkar',
+    },
+  ], [skillsList, selectedModel, advisor, goalMode, loopMode, planYolo, thinkingLevel]);
 
   const filteredCommands: CommandItem[] = useMemo(() => {
     if (!prompt.startsWith('/')) return [];
@@ -584,13 +1101,39 @@ export const AgentStudio: React.FC<AgentStudioProps> = ({
       setPrompt(`/advisor ${next ? 'on' : 'off'}`);
       return;
     }
-    if (cmd.id === 'loop') {
+    if (cmd.id === 'goal') {
       setGoalMode(!goalMode);
       setPrompt('');
       return;
     }
-    if (cmd.id === 'help' || cmd.id === 'changelog') {
+    if (cmd.id === 'loop') {
+      setLoopMode(!loopMode);
+      setPrompt('');
+      return;
+    }
+    if (cmd.id === 'plan') {
+      setPlanYolo(!planYolo);
+      setPrompt('');
+      return;
+    }
+    if (cmd.id === 'changelog') {
+      setChangelogArg('recent');
+      setShowChangelogModal(true);
+      setPrompt('');
+      return;
+    }
+    if (cmd.id === 'help' || cmd.id === 'hotkeys') {
       setShowHelpModal(true);
+      setPrompt('');
+      return;
+    }
+    if (cmd.id === 'setup' || cmd.id === 'providers') {
+      if (onOpenSettings) onOpenSettings();
+      setPrompt('');
+      return;
+    }
+    if (cmd.id === 'cleanse') {
+      if (onOpenDevTools) onOpenDevTools();
       setPrompt('');
       return;
     }
@@ -787,24 +1330,73 @@ export const AgentStudio: React.FC<AgentStudioProps> = ({
       return;
     }
 
-    // 7. /help & /changelog
-    if (trimmed === '/help' || trimmed === '/changelog') {
+    // 7. /help & /hotkeys
+    if (trimmed === '/help' || trimmed === '/hotkeys') {
       setShowHelpModal(true);
       setPrompt('');
       return;
     }
 
-    // 8. /loop
-    if (trimmed.startsWith('/loop')) {
+    // 8. /changelog
+    if (trimmed.startsWith('/changelog')) {
+      const parts = trimmed.split(/\s+/);
+      if (parts[1]?.toLowerCase() === 'full') {
+        setChangelogArg('full');
+      } else {
+        setChangelogArg('recent');
+      }
+      setShowChangelogModal(true);
+      setPrompt('');
+      return;
+    }
+
+    // 9. /goal
+    if (trimmed.startsWith('/goal')) {
       const parts = trimmed.split(/\s+/);
       const action = parts[1]?.toLowerCase();
-      if (action === 'on' || action === '1' || action === 'enable') {
+      if (action === 'on' || action === '1' || action === 'enable' || action === 'set') {
         setGoalMode(true);
-      } else if (action === 'off' || action === '0' || action === 'disable') {
+      } else if (action === 'off' || action === '0' || action === 'disable' || action === 'drop' || action === 'pause') {
         setGoalMode(false);
       } else {
         setGoalMode(!goalMode);
       }
+      setPrompt('');
+      return;
+    }
+
+    // 10. /loop
+    if (trimmed.startsWith('/loop')) {
+      const parts = trimmed.split(/\s+/);
+      const action = parts[1]?.toLowerCase();
+      if (action === 'on' || action === '1' || action === 'enable') {
+        setLoopMode(true);
+      } else if (action === 'off' || action === '0' || action === 'disable') {
+        setLoopMode(false);
+      } else {
+        setLoopMode(!loopMode);
+      }
+      setPrompt('');
+      return;
+    }
+
+    // 11. /plan
+    if (trimmed.startsWith('/plan')) {
+      setPlanYolo(!planYolo);
+      setPrompt('');
+      return;
+    }
+
+    // 12. /setup & /providers
+    if (trimmed === '/setup' || trimmed === '/providers') {
+      if (onOpenSettings) onOpenSettings();
+      setPrompt('');
+      return;
+    }
+
+    // 13. /cleanse
+    if (trimmed === '/cleanse') {
+      if (onOpenDevTools) onOpenDevTools();
       setPrompt('');
       return;
     }
@@ -869,6 +1461,7 @@ export const AgentStudio: React.FC<AgentStudioProps> = ({
       approvalMode,
       autoApprove,
       goalMode,
+      loopMode,
       planYolo,
       prewalk,
       advisor,
@@ -899,6 +1492,7 @@ export const AgentStudio: React.FC<AgentStudioProps> = ({
       approvalMode,
       autoApprove,
       goalMode,
+      loopMode,
       planYolo,
       prewalk,
       advisor,
@@ -1265,6 +1859,7 @@ export const AgentStudio: React.FC<AgentStudioProps> = ({
         {/* Context Size Progress Bar & Git Branch Info Bar right above the input */}
         <div className="flex items-center justify-between px-1 text-xs select-none font-mono">
           {/* Left: Git Branch (if available) */}
+          {/* Left: Git Branch & Mode Indicators (Goal, Loop) */}
           <div className="flex items-center space-x-2">
             {gitBranch ? (
               <div 
@@ -1275,6 +1870,45 @@ export const AgentStudio: React.FC<AgentStudioProps> = ({
                 <span className="font-bold text-white uppercase">{gitBranch}</span>
               </div>
             ) : null}
+
+            {/* Mode Indicators: Goal & Loop */}
+            <div className="flex items-center space-x-1.5">
+              <button
+                type="button"
+                onClick={() => setGoalMode(!goalMode)}
+                title={goalMode ? 'Hedef (Goal) Modu Aktif: Otonom görev yürütülüyor. Kapatmak için tıklayın.' : 'Hedef (Goal) Modu Pasif: Açmak için tıklayın veya /goal yazın.'}
+                className={`flex items-center space-x-1 px-2 py-0.5 rounded-[2px] border text-[11px] font-mono transition cursor-pointer ${
+                  goalMode
+                    ? 'bg-amber-500/20 border-amber-500/50 text-amber-300 font-bold shadow-xs'
+                    : 'bg-omp-bg border-omp-border text-omp-muted hover:text-zinc-200 hover:border-zinc-500'
+                }`}
+              >
+                <span className="text-xs">🎯</span>
+                <span className="font-bold">GOAL:</span>
+                <span className={goalMode ? 'text-amber-300 uppercase font-bold' : 'text-omp-muted uppercase'}>
+                  {goalMode ? 'AKTİF' : 'PASİF'}
+                </span>
+                {goalMode && <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse ml-0.5" />}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setLoopMode(!loopMode)}
+                title={loopMode ? 'Döngü (Loop) Modu Aktif: Görev bitene kadar döngü tekrar eder. Kapatmak için tıklayın.' : 'Döngü (Loop) Modu Pasif: Açmak için tıklayın veya /loop yazın.'}
+                className={`flex items-center space-x-1 px-2 py-0.5 rounded-[2px] border text-[11px] font-mono transition cursor-pointer ${
+                  loopMode
+                    ? 'bg-emerald-500/20 border-emerald-500/50 text-emerald-300 font-bold shadow-xs'
+                    : 'bg-omp-bg border-omp-border text-omp-muted hover:text-zinc-200 hover:border-zinc-500'
+                }`}
+              >
+                <span className="text-xs">↺</span>
+                <span className="font-bold">LOOP:</span>
+                <span className={loopMode ? 'text-emerald-300 uppercase font-bold' : 'text-omp-muted uppercase'}>
+                  {loopMode ? 'AKTİF' : 'PASİF'}
+                </span>
+                {loopMode && <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse ml-0.5" />}
+              </button>
+            </div>
           </div>
 
           {/* Right: Cost & Context Size Progress Bar */}
@@ -1594,6 +2228,31 @@ export const AgentStudio: React.FC<AgentStudioProps> = ({
 
               {/* Model & Thinking status pills */}
               <div className="flex items-center space-x-1.5 text-[11px] font-mono">
+                {/* Goal Mode Indicator Pill in Composer */}
+                {goalMode && (
+                  <button
+                    type="button"
+                    onClick={() => setGoalMode(false)}
+                    className="flex items-center space-x-1 px-2 py-0.5 rounded-[2px] bg-amber-500/20 border border-amber-500/40 text-amber-300 font-mono text-[10px] font-bold hover:bg-amber-500/30 transition cursor-pointer"
+                    title="Hedef (Goal) Modu Aktif - Kapatmak için tıklayın"
+                  >
+                    <span>🎯</span>
+                    <span>GOAL</span>
+                  </button>
+                )}
+
+                {/* Loop Mode Indicator Pill in Composer */}
+                {loopMode && (
+                  <button
+                    type="button"
+                    onClick={() => setLoopMode(false)}
+                    className="flex items-center space-x-1 px-2 py-0.5 rounded-[2px] bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 font-mono text-[10px] font-bold hover:bg-emerald-500/30 transition cursor-pointer"
+                    title="Döngü (Loop) Modu Aktif - Kapatmak için tıklayın"
+                  >
+                    <span>↺</span>
+                    <span>LOOP</span>
+                  </button>
+                )}
                 {advisor && (
                   <button
                     type="button"
@@ -1676,6 +2335,8 @@ export const AgentStudio: React.FC<AgentStudioProps> = ({
         onToggleAutoApprove={setAutoApprove}
         goalMode={goalMode}
         onToggleGoalMode={setGoalMode}
+        loopMode={loopMode}
+        onToggleLoopMode={setLoopMode}
         planYolo={planYolo}
         onTogglePlanYolo={setPlanYolo}
         prewalk={prewalk}
@@ -1691,6 +2352,13 @@ export const AgentStudio: React.FC<AgentStudioProps> = ({
         currentRoles={currentRoles}
         onSaveRole={handleSaveStudioRole}
         initialModel={selectedModel}
+      />
+
+      {/* Changelog Modal (/changelog) */}
+      <ChangelogModal
+        isOpen={showChangelogModal}
+        onClose={() => setShowChangelogModal(false)}
+        initialMode={changelogArg}
       />
 
       {/* Swiss Command Help Modal (/help) */}
@@ -1731,18 +2399,46 @@ export const AgentStudio: React.FC<AgentStudioProps> = ({
             <div className="p-4 overflow-y-auto space-y-2">
               <div className="border border-omp-border rounded-[2px] overflow-hidden divide-y divide-omp-border bg-omp-bg">
                 {[
-                  { cmd: '/skill:<name> [prompt]', desc: 'Seçili becerinin yönergelerini bağlama yükler ve çalıştırır (örn: /skill:brand-voice)', glyph: '✦', col: 'text-cyan-400' },
-                  { cmd: '/clear, /new', desc: 'Mevcut sohbet mesajlarını temizler ve oturumu sıfırlar', glyph: '🗑', col: 'text-red-400' },
-                  { cmd: '/model [isim]', desc: 'Model & Rol sihirbazını açar veya yazılan modeli seçer', glyph: '⬡', col: 'text-blue-400' },
-                  { cmd: '/usage, /stats', desc: 'Canlı sağlayıcı kotalarını ve hız sınırlarını görüntüler', glyph: '⚡', col: 'text-amber-400' },
-                  { cmd: '/compact [odak]', desc: 'Konuşma geçmişini analiz edip bağlamı sıkıştırır', glyph: 'G', col: 'text-purple-400' },
+                  // Modlar & Otonom Hedefler
+                  { cmd: '/goal [set|pause|resume|drop]', desc: 'Hedef Modu: Otonom hedef ve test döngüsü kurar', glyph: '🎯', col: 'text-amber-400' },
+                  { cmd: '/loop [adet|süre]', desc: 'Döngü Modu: Görev tamamlanana kadar ardışık döngü çalıştırır', glyph: '↺', col: 'text-emerald-400' },
+                  { cmd: '/plan [prompt]', desc: 'Plan Modu: Değişiklik yapmadan önce mimari plan üretir', glyph: '📋', col: 'text-blue-400' },
+                  { cmd: '/vibe [prompt]', desc: 'Vibe Modu: Hızlı salt-okunur araç setiyle kalıcı oturum', glyph: '🌊', col: 'text-cyan-400' },
+                  { cmd: '/security [plan|scan|show]', desc: 'OMP yerel güvenlik taramaları ve analizleri', glyph: '🛡', col: 'text-rose-400' },
+
+                  // Model & Düşünme
+                  { cmd: '/model [isim]', desc: 'Model & 3 Aşamalı Rol Atama Sihirbazını açar veya model seçer', glyph: '⬡', col: 'text-blue-400' },
+                  { cmd: '/effort [seviye]', desc: 'Düşünme bütçesi ve akıl yürütme seviyesini ayarlar (off..max)', glyph: '⚡', col: 'text-amber-400' },
+                  { cmd: '/fast [on|ultra|off]', desc: 'Hızlı servis katmanını (priority/ultrafast) açar / kapatır', glyph: '⚡', col: 'text-amber-300' },
+                  { cmd: '/slow [on|off]', desc: 'Yavaş / flex servis katmanını açar / kapatır', glyph: '⏳', col: 'text-blue-300' },
                   { cmd: '/advisor [on|off]', desc: 'Pasif güvenlik ve mimari danışmanını açar / kapatır', glyph: '👁', col: 'text-rose-400' },
-                  { cmd: '/skills', desc: 'Beceri kütüphanesini ve özel skill editörünü açar', glyph: '✦', col: 'text-cyan-400' },
-                  { cmd: '/settings', desc: 'Konfigürasyon ve model sağlayıcı girişini (/login) açar', glyph: '⚙', col: 'text-zinc-300' },
+
+                  // Bağlam & Sıkıştırma
+                  { cmd: '/compact [odak]', desc: 'Konuşma geçmişini analiz edip bağlamı sıkıştırır', glyph: 'G', col: 'text-purple-400' },
+                  { cmd: '/shake [elide|images|thinking]', desc: 'Ağır araç çıktılarını ve görselleri bağlamdan çıkarır', glyph: '📳', col: 'text-purple-300' },
+                  { cmd: '/handoff [odak]', desc: 'Oturumu handoff belgesine özetleyip yerinde sıkıştırır', glyph: '🤝', col: 'text-emerald-300' },
+                  { cmd: '/fresh', desc: 'Transkripti değiştirmeden model sağlayıcı yayın durumunu sıfırlar', glyph: '↻', col: 'text-teal-400' },
+                  { cmd: '/clear, /new', desc: 'Mevcut sohbet mesajlarını temizler veya yeni oturum başlatır', glyph: '🗑', col: 'text-red-400' },
+                  { cmd: '/delete', desc: 'Mevcut oturumu diskten tamamen siler', glyph: '✕', col: 'text-red-500' },
+
+                  // Sürüm Notları & Telemetri
+                  { cmd: '/changelog [full|last N]', desc: 'oh-my-pi resmi sürüm notları ve değişiklik geçmişi modalını açar', glyph: '📰', col: 'text-emerald-400' },
+                  { cmd: '/usage, /stats', desc: 'Canlı sağlayıcı kotalarını ve hız sınırlarını görüntüler', glyph: '⚡', col: 'text-amber-400' },
+                  { cmd: '/context', desc: 'Token ve bağlam kullanım dökümünü gösterir', glyph: '📏', col: 'text-purple-400' },
+                  { cmd: '/tools', desc: 'Ajana görünür tüm yerel ve MCP araçlarını listeler', glyph: '🛠', col: 'text-cyan-400' },
+                  { cmd: '/jobs', desc: 'Arka plan asenkron görev durumlarını listeler', glyph: '⚙', col: 'text-zinc-300' },
+
+                  // Geliştirici & Ortak Çalışma
+                  { cmd: '/skill:<isim> [prompt]', desc: 'Seçili beceriyi bağlama yükler ve çalıştırır (örn: /skill:brand-voice)', glyph: '✦', col: 'text-cyan-400' },
+                  { cmd: '/cleanse', desc: 'Paralel subagentlar ile projedeki tüm derleme ve tip hatalarını düzeltir', glyph: '🩺', col: 'text-emerald-400' },
                   { cmd: '/devtools', desc: 'Geliştirici araçlarını (Git, Ps, Cleanse) açar', glyph: '⌘', col: 'text-zinc-300' },
+                  { cmd: '/btw [soru]', desc: 'Ana bağlamı kirletmeden ajana hızlı yan soru sorar', glyph: '?', col: 'text-red-400' },
+                  { cmd: '/collab [start|view|stop]', desc: 'Oturumu canlı röle üzerinden paylaşıma açar', glyph: '📡', col: 'text-emerald-400' },
+                  { cmd: '/export [--themes] [yol]', desc: 'Oturumu HTML dosyası olarak dışa aktarır', glyph: '📤', col: 'text-cyan-400' },
+                  { cmd: '/dump [all|anon]', desc: 'Konuşma transkriptini panoya kopyalar', glyph: '📋', col: 'text-zinc-300' },
+                  { cmd: '/skills', desc: 'Beceri kütüphanesini ve özel skill editörünü açar', glyph: '✦', col: 'text-cyan-400' },
+                  { cmd: '/settings', desc: 'Sistem ayarlarını ve model sağlayıcı girişini (/login) açar', glyph: '⚙', col: 'text-zinc-300' },
                   { cmd: '/resume', desc: 'Kayıtlı oturumlar çekmecesini açar', glyph: '🕒', col: 'text-zinc-300' },
-                  { cmd: '/loop [on|off]', desc: 'Hedef (Goal) döngü modunu etkinleştirir / kapatır', glyph: '↺', col: 'text-emerald-400' },
-                  { cmd: '/btw [soru]', desc: 'Ana bağlamı kirletmeden yan soru sorar', glyph: '?', col: 'text-red-400' },
                   { cmd: '/help', desc: 'Bu komut yardım ve kısayollar kılavuzunu görüntüler', glyph: 'ℹ', col: 'text-cyan-400' },
                 ].map((item) => (
                   <div key={item.cmd} className="p-2.5 flex items-start justify-between gap-3 text-xs hover:bg-omp-surface transition">
