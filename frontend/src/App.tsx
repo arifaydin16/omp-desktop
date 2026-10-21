@@ -471,6 +471,78 @@ export function App() {
       console.error('Failed to switch profile:', e);
     }
   };
+  // Global Keyboard Shortcuts (Ctrl+N, Ctrl+B, Ctrl+,, Ctrl+Shift+U/S/D, Ctrl+K, Escape)
+  useEffect(() => {
+    const handleGlobalKeyDown = (e: KeyboardEvent) => {
+      const isCmdOrCtrl = e.ctrlKey || e.metaKey;
+
+      // Escape: Close active drawer
+      if (e.key === 'Escape') {
+        if (activeDrawer) {
+          e.preventDefault();
+          setActiveDrawer(null);
+          return;
+        }
+      }
+
+      // Ctrl + N: New Session
+      if (isCmdOrCtrl && e.key.toLowerCase() === 'n' && !e.shiftKey) {
+        e.preventDefault();
+        handleNewSession();
+        return;
+      }
+
+      // Ctrl + B: Toggle Sessions Sidebar
+      if (isCmdOrCtrl && e.key.toLowerCase() === 'b' && !e.shiftKey) {
+        e.preventDefault();
+        setIsSidebarOpen((prev) => !prev);
+        return;
+      }
+
+      // Ctrl + ,: Toggle Settings
+      if (isCmdOrCtrl && e.key === ',') {
+        e.preventDefault();
+        setActiveDrawer((prev) => (prev === 'settings' ? null : 'settings'));
+        return;
+      }
+
+      // Ctrl + Shift + U: Toggle Usage Dialog
+      if (isCmdOrCtrl && e.shiftKey && e.key.toLowerCase() === 'u') {
+        e.preventDefault();
+        setActiveDrawer((prev) => (prev === 'usage' ? null : 'usage'));
+        return;
+      }
+
+      // Ctrl + Shift + S: Toggle Skills Drawer
+      if (isCmdOrCtrl && e.shiftKey && e.key.toLowerCase() === 's') {
+        e.preventDefault();
+        setActiveDrawer((prev) => (prev === 'skills' ? null : 'skills'));
+        return;
+      }
+
+      // Ctrl + Shift + D: Toggle DevTools Drawer
+      if (isCmdOrCtrl && e.shiftKey && e.key.toLowerCase() === 'd') {
+        e.preventDefault();
+        setActiveDrawer((prev) => (prev === 'devtools' ? null : 'devtools'));
+        return;
+      }
+
+      // Ctrl + K or Ctrl + /: Focus Prompt Input
+      if (isCmdOrCtrl && (e.key.toLowerCase() === 'k' || e.key === '/') && !e.shiftKey) {
+        const activeTag = document.activeElement?.tagName.toLowerCase();
+        if (activeTag !== 'input' && activeTag !== 'textarea') {
+          e.preventDefault();
+          const inputEl = document.getElementById('omp-badge-prompt-input');
+          if (inputEl) {
+            inputEl.focus();
+          }
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleGlobalKeyDown);
+    return () => window.removeEventListener('keydown', handleGlobalKeyDown);
+  }, [activeDrawer]);
 
 
   return (

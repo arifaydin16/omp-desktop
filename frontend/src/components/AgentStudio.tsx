@@ -58,6 +58,16 @@ export const AgentStudio: React.FC<AgentStudioProps> = ({
 }) => {
   const [prompt, setPrompt] = useState('');
   const [showHelpModal, setShowHelpModal] = useState(false);
+  const [helpModalTab, setHelpModalTab] = useState<'commands' | 'hotkeys'>('commands');
+  const [collapsedThinking, setCollapsedThinking] = useState<Record<string, boolean>>({});
+  const [copiedCodeBlockId, setCopiedCodeBlockId] = useState<string | null>(null);
+
+  const toggleThinkingCollapse = (id: string) => {
+    setCollapsedThinking((prev) => ({
+      ...prev,
+      [id]: !prev[id],
+    }));
+  };
   const [showParamsDialog, setShowParamsDialog] = useState(false);
   const [showRoleWizard, setShowRoleWizard] = useState(false);
   const [currentRoles, setCurrentRoles] = useState<Record<string, string>>({});
@@ -1643,6 +1653,74 @@ export const AgentStudio: React.FC<AgentStudioProps> = ({
     setCopiedId(id);
     setTimeout(() => setCopiedId(null), 2000);
   };
+  const renderMessageContent = (text: string, msgId: string) => {
+    const parts: React.ReactNode[] = [];
+    const codeBlockRegex = /```([a-zA-Z0-9_-]*)\n?([\s\S]*?)```/g;
+    let lastIndex = 0;
+    let match: RegExpExecArray | null;
+
+    while ((match = codeBlockRegex.exec(text)) !== null) {
+      const textBefore = text.slice(lastIndex, match.index);
+      if (textBefore) {
+        parts.push(
+          <span key={`text-${lastIndex}`} className="whitespace-pre-wrap font-sans text-sm text-zinc-100 leading-relaxed select-text">
+            {textBefore}
+          </span>
+        );
+      }
+
+      const lang = (match[1] || 'TEXT').toUpperCase();
+      const code = match[2];
+      const blockKey = `${msgId}-code-${match.index}`;
+      const isCopied = copiedCodeBlockId === blockKey;
+
+      parts.push(
+        <div key={blockKey} className="my-2.5 rounded-[2px] border border-omp-border bg-[#09090b] overflow-hidden">
+          <div className="flex items-center justify-between px-3 py-1 bg-omp-surface border-b border-omp-border text-[10px] font-mono text-omp-muted select-none">
+            <span className="font-bold tracking-wider text-zinc-300 font-mono">{lang}</span>
+            <button
+              type="button"
+              onClick={() => {
+                navigator.clipboard.writeText(code);
+                setCopiedCodeBlockId(blockKey);
+                setTimeout(() => setCopiedCodeBlockId(null), 2000);
+              }}
+              className="flex items-center space-x-1 hover:text-white transition px-1.5 py-0.5 rounded-[2px] hover:bg-omp-surfaceLight font-mono text-[10px]"
+              title="Kodu Kopyala"
+            >
+              {isCopied ? (
+                <>
+                  <Rune name="indicators-check" size={11} className="text-omp-success" />
+                  <span className="text-omp-success font-semibold">KOPYALANDI</span>
+                </>
+              ) : (
+                <>
+                  <Rune name="code-copy" size={11} />
+                  <span>KOPYALA</span>
+                </>
+              )}
+            </button>
+          </div>
+          <pre className="p-3 text-[12px] font-mono text-zinc-200 overflow-x-auto leading-relaxed whitespace-pre select-text">
+            <code>{code}</code>
+          </pre>
+        </div>
+      );
+
+      lastIndex = match.index + match[0].length;
+    }
+
+    const remainingText = text.slice(lastIndex);
+    if (remainingText) {
+      parts.push(
+        <span key={`text-${lastIndex}`} className="whitespace-pre-wrap font-sans text-sm text-zinc-100 leading-relaxed select-text">
+          {remainingText}
+        </span>
+      );
+    }
+
+    return parts;
+  };
 
   return (
     <div 
@@ -1805,13 +1883,28 @@ export const AgentStudio: React.FC<AgentStudioProps> = ({
                   {/* Thinking Section */}
                   {displayThinking ? (
                     <div className="mb-3.5 pb-3 border-b border-omp-border/80 select-text">
-                      <div className="flex items-center space-x-1.5 text-zinc-400 font-bold uppercase text-[10px] tracking-wider mb-1.5 select-none font-mono">
-                        <Rune name="tools-sparkles" size={12} className="text-omp-accent shrink-0" />
-                        <span>REASONING STREAM // THINKING</span>
+                      <div
+                        onClick={() => toggleThinkingCollapse(msg.id || String(idx))}
+                        className="flex items-center justify-between text-zinc-400 font-bold uppercase text-[10px] tracking-wider mb-1.5 select-none font-mono cursor-pointer hover:text-white transition group/th"
+                        title={collapsedThinking[msg.id || String(idx)] ? 'Düşünce adımlarını genişlet' : 'Düşünce adımlarını daralt'}
+                      >
+                        <div className="flex items-center space-x-1.5">
+                          <Rune name="tools-sparkles" size={12} className="text-omp-accent shrink-0" />
+                          <span>REASONING STREAM // THINKING</span>
+                          <span className="text-[9px] px-1.5 py-0.2 bg-omp-bg border border-omp-border text-omp-muted rounded-[2px] font-normal normal-case">
+                            {displayThinking.split('\n').length} satır (~{Math.round(displayThinking.length / 3.8)} token)
+                          </span>
+                        </div>
+                        <div className="flex items-center space-x-1 text-omp-muted group-hover/th:text-white transition">
+                          <span className="text-[9px] uppercase">{collapsedThinking[msg.id || String(idx)] ? 'GENİŞLET' : 'DARALT'}</span>
+                          <Rune name={collapsedThinking[msg.id || String(idx)] ? 'arrows-chevron-down' : 'arrows-chevron-up'} size={11} />
+                        </div>
                       </div>
-                      <div className="text-zinc-300 font-mono text-[11px] leading-relaxed bg-omp-surface/80 p-3 rounded-[2px] border border-omp-border whitespace-pre-wrap">
-                        {displayThinking}
-                      </div>
+                      {!collapsedThinking[msg.id || String(idx)] && (
+                        <div className="text-zinc-300 font-mono text-[11px] leading-relaxed bg-omp-surface/80 p-3 rounded-[2px] border border-omp-border whitespace-pre-wrap max-h-[380px] overflow-y-auto">
+                          {displayThinking}
+                        </div>
+                      )}
                     </div>
                   ) : null}
 
@@ -1823,10 +1916,10 @@ export const AgentStudio: React.FC<AgentStudioProps> = ({
                     </div>
                   )}
 
-                  {/* Main Response in Bright White */}
+                  {/* Main Response in Bright White (With Code Block Formatting) */}
                   {rawText ? (
-                    <div className="whitespace-pre-wrap font-sans text-sm text-zinc-100 leading-relaxed select-text">
-                      {rawText}
+                    <div className="font-sans text-sm text-zinc-100 leading-relaxed select-text">
+                      {renderMessageContent(rawText, msg.id || String(idx))}
                       {isCurrentlyRunning && (
                         <span className="inline-block w-2 h-4 ml-1.5 bg-omp-accent animate-pulse align-middle" />
                       )}
@@ -2381,22 +2474,49 @@ export const AgentStudio: React.FC<AgentStudioProps> = ({
         >
           <div className="px-5 py-3 border-b border-omp-border flex items-center justify-between bg-omp-surface">
             <div className="flex items-center space-x-2.5">
-                <div className="w-6 h-6 bg-omp-accent flex items-center justify-center font-bold text-white rounded-[2px]">
-                  <Rune name="code-terminal" size={13} />
-                </div>
-                <h3 className="font-bold text-white text-xs uppercase tracking-wider">
-                  COMMANDS & SHORTCUTS GUIDE (/HELP)
-                </h3>
+              <div className="w-6 h-6 bg-omp-accent flex items-center justify-center font-bold text-white rounded-[2px]">
+                <Rune name="code-terminal" size={13} />
               </div>
-              <button
-                onClick={() => setShowHelpModal(false)}
-                className="p-1 rounded-[2px] hover:bg-omp-bg text-omp-muted hover:text-white"
-              >
-                <Rune name="indicators-x" size={14} />
-              </button>
+              <h3 className="font-bold text-white text-xs uppercase tracking-wider">
+                COMMANDS & SHORTCUTS GUIDE (/HELP)
+              </h3>
             </div>
+            <button
+              onClick={() => setShowHelpModal(false)}
+              className="p-1 rounded-[2px] hover:bg-omp-bg text-omp-muted hover:text-white"
+            >
+              <Rune name="indicators-x" size={14} />
+            </button>
+          </div>
 
-            <div className="p-4 overflow-y-auto space-y-2">
+          {/* Tabs */}
+          <div className="px-5 pt-2 flex space-x-3 border-b border-omp-border bg-omp-surface">
+            <button
+              type="button"
+              onClick={() => setHelpModalTab('commands')}
+              className={`pb-2 text-xs font-mono font-bold uppercase tracking-wider border-b-2 transition ${
+                helpModalTab === 'commands'
+                  ? 'border-omp-accent text-white'
+                  : 'border-transparent text-omp-muted hover:text-white'
+              }`}
+            >
+              SLASH KOMUTLAR (70+)
+            </button>
+            <button
+              type="button"
+              onClick={() => setHelpModalTab('hotkeys')}
+              className={`pb-2 text-xs font-mono font-bold uppercase tracking-wider border-b-2 transition ${
+                helpModalTab === 'hotkeys'
+                  ? 'border-omp-accent text-white'
+                  : 'border-transparent text-omp-muted hover:text-white'
+              }`}
+            >
+              KLAVYE KISAYOLLARI
+            </button>
+          </div>
+
+          <div className="p-4 overflow-y-auto space-y-2">
+            {helpModalTab === 'commands' ? (
               <div className="border border-omp-border rounded-[2px] overflow-hidden divide-y divide-omp-border bg-omp-bg">
                 {[
                   // Modlar & Otonom Hedefler
@@ -2452,20 +2572,50 @@ export const AgentStudio: React.FC<AgentStudioProps> = ({
                   </div>
                 ))}
               </div>
-            </div>
+            ) : (
+              <div className="border border-omp-border rounded-[2px] overflow-hidden divide-y divide-omp-border bg-omp-bg">
+                {[
+                  { key: 'Ctrl + N', desc: 'Yeni Oturum Başlat (Geçmişi temizler)' },
+                  { key: 'Ctrl + B', desc: 'Oturumlar (Workspaces) Sol Kenar Çubuğunu Aç / Kapat' },
+                  { key: 'Ctrl + ,', desc: 'Yapılandırma & Ayarlar Modalını Aç (Genel, Auth, Ek Seçenekler)' },
+                  { key: 'Ctrl + K / Ctrl + /', desc: 'Mesaj Giriş Alanına Doğrudan Odaklan' },
+                  { key: 'Ctrl + Shift + U', desc: 'Model Sağlayıcı Kotalarını ve Hız Sınırlarını Görüntüle (/usage)' },
+                  { key: 'Ctrl + Shift + S', desc: 'Beceriler (Skills) ve Özel Skill Editörünü Aç' },
+                  { key: 'Ctrl + Shift + D', desc: 'Geliştirici Araçları (DevTools) Çekmecesini Aç' },
+                  { key: 'Esc', desc: 'Açık olan herhangi bir modal veya sağ çekmeceyi kapat' },
+                  { key: 'Ctrl + V', desc: 'Pano Görseli (Print Screen) veya Dosya Yapıştır (#1, #2 rozeti)' },
+                  { key: 'Enter', desc: 'Mesajı / Komutu Gönder' },
+                  { key: 'Shift + Enter', desc: 'Mesaj İçinde Yeni Satıra Geç' },
+                  { key: '/', desc: 'Slash Komut Listesini (70+ Komut) Aç ve Filtrele' },
+                  { key: '@', desc: 'Çalışma Alanı (Workspace) Dosyalarını Mesaja İliştir' },
+                ].map((shortcut) => (
+                  <div key={shortcut.key} className="p-2.5 flex items-center justify-between gap-3 text-xs hover:bg-omp-surface transition">
+                    <div className="flex items-center space-x-1.5">
+                      <kbd className="px-2 py-0.5 bg-omp-surface border border-omp-border text-white rounded-[2px] font-mono text-[11px] font-bold shadow-xs">
+                        {shortcut.key}
+                      </kbd>
+                    </div>
+                    <div className="text-[11px] text-zinc-300 font-sans text-right">
+                      {shortcut.desc}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
 
-            <div className="px-5 py-2.5 border-t border-omp-border bg-omp-surface flex items-center justify-between">
-              <span className="text-[10px] text-omp-muted uppercase">İpucu: Mesaj alanında &apos;/&apos; tuşuna basarak anında tamamlayabilirsiniz.</span>
-              <button
-                onClick={() => setShowHelpModal(false)}
-                className="px-3 py-1 rounded-[2px] bg-omp-accent hover:bg-omp-accentHover text-white font-bold text-xs uppercase"
-              >
-                KAPAT
-              </button>
-            </div>
+          <div className="px-5 py-2.5 border-t border-omp-border bg-omp-surface flex items-center justify-between">
+            <span className="text-[10px] text-omp-muted uppercase">İpucu: Mesaj alanında &apos;/&apos; tuşuna basarak anında tamamlayabilirsiniz.</span>
+            <button
+              onClick={() => setShowHelpModal(false)}
+              className="px-3 py-1 rounded-[2px] bg-omp-accent hover:bg-omp-accentHover text-white font-bold text-xs uppercase"
+            >
+              KAPAT
+            </button>
           </div>
         </div>
       </div>
+    </div>
   );
 };
 

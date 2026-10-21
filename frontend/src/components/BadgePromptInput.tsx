@@ -214,6 +214,7 @@ export const BadgePromptInput: React.FC<BadgePromptInputProps> = ({
   return (
     <div className="relative w-full">
       <div
+        id="omp-badge-prompt-input"
         ref={editorRef}
         contentEditable={!disabled}
         suppressContentEditableWarning
