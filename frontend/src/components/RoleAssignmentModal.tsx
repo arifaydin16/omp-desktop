@@ -1,24 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { 
-  X, 
-  Search, 
-  Sparkles, 
-  Cpu, 
-  BrainCircuit, 
-  Check, 
-  Plus, 
-  ChevronRight, 
-  Layers,
-  Zap,
-  Shield,
-  Eye,
-  GitCommit,
-  Bot,
-  Scale,
-  Globe,
-  SlidersHorizontal,
-  Bookmark
-} from 'lucide-react';
+import { Rune } from './Rune';
 import { ModelEntry } from '../types';
 
 export interface RoleAssignmentModalProps {
@@ -32,30 +13,30 @@ export interface RoleAssignmentModalProps {
 }
 
 const BUILT_IN_ROLES = [
-  { id: 'default', label: 'default', icon: Sparkles, desc: 'Varsayılan birincil sohbet ve kodlama modeli' },
-  { id: 'smol', label: 'smol', icon: Zap, desc: 'Hızlı ve ekonomik yardımcı model' },
-  { id: 'slow', label: 'slow', icon: BrainCircuit, desc: 'Ağır mantık ve derin muhakeme modeli' },
-  { id: 'vision', label: 'vision', icon: Eye, desc: 'Görsel ve ekran görüntüsü analiz modeli' },
-  { id: 'plan', label: 'plan', icon: Layers, desc: 'Mimari planlama ve yol haritası modeli' },
-  { id: 'commit', label: 'commit', icon: GitCommit, desc: 'Git commit mesajı oluşturucu model' },
-  { id: 'tiny', label: 'tiny', icon: Cpu, desc: 'Ultra hafif yerel veya bulut model' },
-  { id: 'memory', label: 'memory', icon: Bookmark, desc: 'Oturum hafızası ve özetleme modeli' },
-  { id: 'task', label: 'task', icon: Bot, desc: 'Paralel subagent ve görev yöneticisi' },
-  { id: 'advisor', label: 'advisor', icon: Shield, desc: 'Pasif güvenlik ve mimari denetim modeli' },
-  { id: 'widget', label: 'widget', icon: SlidersHorizontal, desc: 'Arayüz ve widget etkileşim modeli' },
-  { id: 'web', label: 'web', icon: Globe, desc: 'İnternet araması ve sayfa okuma modeli' },
-  { id: 'judge', label: 'judge', icon: Scale, desc: 'Değerlendirme ve sınıflandırma modeli' },
+  { id: 'default', label: 'default', icon: 'tools-sparkles', desc: 'Varsayılan birincil sohbet ve kodlama modeli' },
+  { id: 'smol', label: 'smol', icon: 'other-zap', desc: 'Hızlı ve ekonomik yardımcı model' },
+  { id: 'slow', label: 'slow', icon: 'tools-sparkles', desc: 'Ağır mantık ve derin muhakeme modeli' },
+  { id: 'vision', label: 'vision', icon: 'senses-eye', desc: 'Görsel ve ekran görüntüsü analiz modeli' },
+  { id: 'plan', label: 'plan', icon: 'layouts-layers-2', desc: 'Mimari planlama ve yol haritası modeli' },
+  { id: 'commit', label: 'commit', icon: 'code-git-commit-horizontal', desc: 'Git commit mesajı oluşturucu model' },
+  { id: 'tiny', label: 'tiny', icon: 'code-server', desc: 'Ultra hafif yerel veya bulut model' },
+  { id: 'memory', label: 'memory', icon: 'documents-file-text', desc: 'Oturum hafızası ve özetleme modeli' },
+  { id: 'task', label: 'task', icon: 'code-terminal', desc: 'Paralel subagent ve görev yöneticisi' },
+  { id: 'advisor', label: 'advisor', icon: 'identity-shield-check', desc: 'Pasif güvenlik ve mimari denetim modeli' },
+  { id: 'widget', label: 'widget', icon: 'metrics-sliders-horizontal', desc: 'Arayüz ve widget etkileşim modeli' },
+  { id: 'web', label: 'web', icon: 'indicators-square-arrow-out-up-right', desc: 'İnternet araması ve sayfa okuma modeli' },
+  { id: 'judge', label: 'judge', icon: 'metrics-sliders-horizontal', desc: 'Değerlendirme ve sınıflandırma modeli' },
 ];
 
 const THINKING_LEVELS = [
   { id: 'inherit', label: 'inherit', symbol: '⊡', desc: 'Modelin veya sistemin varsayılanını miras al' },
   { id: 'off', label: 'off', symbol: '⊘', desc: 'Düşünme kapalı, doğrudan yanıt' },
   { id: 'auto', label: 'auto', symbol: '↻', desc: 'Model karmaşıklığa göre belirler (Önerilen)' },
-  { id: 'min', label: 'min', symbol: '◌', desc: 'Minimum düşünme bütçesi' },
-  { id: 'low', label: 'low', symbol: '◔', desc: 'Düşük düşünme bütçesi' },
-  { id: 'medium', label: 'medium', symbol: '◑', desc: 'Orta seviye düşünme bütçesi' },
-  { id: 'high', label: 'high', symbol: '◕', desc: 'Yüksek ve detaylı düşünme bütçesi' },
-  { id: 'max', label: 'max', symbol: '●', desc: 'Maksimum genişletilmiş düşünme (64k)' },
+  { id: 'minimal', label: 'minimal', symbol: '1', desc: 'Minimum akıl yürütme adımı' },
+  { id: 'low', label: 'low', symbol: '2', desc: 'Düşük efor ve hızlı düşünme' },
+  { id: 'medium', label: 'medium', symbol: '3', desc: 'Orta seviye dengeli akıl yürütme' },
+  { id: 'high', label: 'high', symbol: '4', desc: 'Derin ve kapsamlı akıl yürütme' },
+  { id: 'max', label: 'max', symbol: '5', desc: 'Maksimum genişletilmiş düşünme bütçesi' },
 ];
 
 export const RoleAssignmentModal: React.FC<RoleAssignmentModalProps> = ({
@@ -64,483 +45,331 @@ export const RoleAssignmentModal: React.FC<RoleAssignmentModalProps> = ({
   availableModels,
   currentRoles,
   onSaveRole,
-  initialModel = '',
-  initialRole = '',
+  initialModel,
+  initialRole,
 }) => {
-  // Step 1: Model Selection
-  const [selectedModel, setSelectedModel] = useState<string>(initialModel);
-  // Step 2: Role Selection
-  const [selectedRole, setSelectedRole] = useState<string>(initialRole);
-  const [customRoleInput, setCustomRoleInput] = useState<string>('');
-  const [isCreatingCustom, setIsCreatingCustom] = useState<boolean>(false);
-  // Step 3: Thinking Level Selection
-  const [selectedThinking, setSelectedThinking] = useState<string>('auto');
-
-  // Filter states for Step 1
-  const [searchQuery, setSearchQuery] = useState('');
-  const [selectedKind, setSelectedKind] = useState<string>('all');
+  const [step, setStep] = useState<1 | 2 | 3>(1);
+  const [selectedModel, setSelectedModel] = useState<string>(initialModel || '');
+  const [selectedRole, setSelectedRole] = useState<string>(initialRole || 'default');
+  const [selectedThinking, setSelectedThinking] = useState<string>('inherit');
+  const [modelSearch, setModelSearch] = useState('');
   const [selectedProvider, setSelectedProvider] = useState<string>('all');
+  const [customRoleInput, setCustomRoleInput] = useState('');
+  const [isCreatingCustom, setIsCreatingCustom] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
 
-  // Active step (1: Model, 2: Role, 3: Thinking Level) - Alway starts at 1 when opened
-  const [step, setStep] = useState<1 | 2 | 3>(1);
+  useEffect(() => {
+    if (initialModel) {
+      setSelectedModel(initialModel);
+    }
+    if (initialRole) {
+      setSelectedRole(initialRole);
+    }
+  }, [initialModel, initialRole]);
 
-  // Reset to Step 1 whenever modal opens
   useEffect(() => {
     if (isOpen) {
       setStep(1);
-      setSelectedModel(initialModel || '');
-      setSelectedRole(initialRole || '');
-      setSelectedThinking('inherit');
-      setCustomRoleInput('');
+      setModelSearch('');
+      setSelectedProvider('all');
       setIsCreatingCustom(false);
-      setSearchQuery('');
+      setCustomRoleInput('');
     }
   }, [isOpen]);
-  // Extract providers and kinds
+
+  const allRoles = useMemo(() => {
+    const list = [...BUILT_IN_ROLES];
+    Object.keys(currentRoles || {}).forEach((r) => {
+      if (!list.some((b) => b.id === r)) {
+        list.push({
+          id: r,
+          label: r,
+          icon: 'tools-settings',
+          desc: 'Kullanıcı tanımlı özel model rolü',
+        });
+      }
+    });
+    return list;
+  }, [currentRoles]);
+
   const providersWithCounts = useMemo(() => {
-    const counts: Record<string, number> = {};
-    for (const m of availableModels) {
+    const map: Record<string, number> = {};
+    availableModels.forEach((m) => {
       const p = m.provider || 'other';
-      counts[p] = (counts[p] || 0) + 1;
-    }
-    return Object.entries(counts).sort((a, b) => b[1] - a[1]);
+      map[p] = (map[p] || 0) + 1;
+    });
+    return Object.entries(map).sort((a, b) => b[1] - a[1]);
   }, [availableModels]);
 
-  const kinds = useMemo(() => {
-    const s = new Set<string>();
-    s.add('all');
-    for (const m of availableModels) {
-      if (m.kind) s.add(m.kind);
-    }
-    return Array.from(s);
-  }, [availableModels]);
-
-  // Filtered models for Step 1
   const filteredModels = useMemo(() => {
     return availableModels.filter((m) => {
-      if (selectedKind !== 'all' && m.kind !== selectedKind) return false;
-      if (selectedProvider !== 'all' && m.provider !== selectedProvider) return false;
-      if (searchQuery.trim()) {
-        const q = searchQuery.toLowerCase();
-        const id = (m.id || '').toLowerCase();
-        const sel = (m.selector || '').toLowerCase();
-        const name = (m.name || '').toLowerCase();
-        const prov = (m.provider || '').toLowerCase();
-        return id.includes(q) || sel.includes(q) || name.includes(q) || prov.includes(q);
+      if (selectedProvider !== 'all' && m.provider !== selectedProvider) {
+        return false;
+      }
+      if (modelSearch.trim()) {
+        const q = modelSearch.toLowerCase();
+        const matchId = (m.id || '').toLowerCase().includes(q);
+        const matchName = (m.name || '').toLowerCase().includes(q);
+        const matchProv = (m.provider || '').toLowerCase().includes(q);
+        return matchId || matchName || matchProv;
       }
       return true;
     });
-  }, [availableModels, selectedKind, selectedProvider, searchQuery]);
+  }, [availableModels, selectedProvider, modelSearch]);
 
-  // Combined roles list: built-in + currently active custom roles
-  const allRoles = useMemo(() => {
-    const list = [...BUILT_IN_ROLES];
-    const builtInIds = new Set(BUILT_IN_ROLES.map((r) => r.id));
-
-    for (const roleKey of Object.keys(currentRoles)) {
-      if (!builtInIds.has(roleKey)) {
-        list.push({
-          id: roleKey,
-          label: roleKey,
-          icon: Sparkles,
-          desc: 'Kullanıcı tanımlı özel rol',
-        });
-      }
-    }
-    return list;
-  }, [currentRoles]);
-  // Dynamically filter thinking levels based on selected model's capabilities
   const modelSpecificThinkingLevels = useMemo(() => {
     const m = (selectedModel || '').toLowerCase();
-    const modelObj = availableModels.find(
-      (mod) => (mod.selector || mod.id).toLowerCase() === m
-    );
-
-    const catalogThinking = modelObj?.thinking;
-
-    return THINKING_LEVELS.filter((lvl) => {
-      // inherit, off, auto are universal
-      if (lvl.id === 'inherit' || lvl.id === 'off' || lvl.id === 'auto') return true;
-
-      // If model JSON catalog has explicit thinking array
-      if (Array.isArray(catalogThinking) && catalogThinking.length > 0) {
-        return catalogThinking.includes(lvl.id);
-      }
-
-      // Gemini: low, high, min are valid; medium and max are not
-      if (m.includes('gemini')) {
-        return lvl.id === 'low' || lvl.id === 'high' || lvl.id === 'min';
-      }
-
-      // Claude: low, medium, high, max
-      if (m.includes('claude')) {
-        return lvl.id === 'low' || lvl.id === 'medium' || lvl.id === 'high' || lvl.id === 'max';
-      }
-
-      // OpenAI reasoning models
-      if (m.includes('o1') || m.includes('o3') || m.includes('gpt-5')) {
-        return lvl.id === 'low' || lvl.id === 'medium' || lvl.id === 'high';
-      }
-
-      return lvl.id !== 'max';
-    });
-  }, [selectedModel, availableModels]);
-
+    if (m.includes('gemini')) {
+      return THINKING_LEVELS.filter((l) => ['inherit', 'auto', 'off', 'low', 'high'].includes(l.id));
+    }
+    if (m.includes('claude')) {
+      return THINKING_LEVELS.filter((l) => ['inherit', 'auto', 'off', 'low', 'medium', 'high', 'max'].includes(l.id));
+    }
+    if (m.includes('o1') || m.includes('o3') || m.includes('gpt-5')) {
+      return THINKING_LEVELS.filter((l) => ['inherit', 'auto', 'low', 'medium', 'high'].includes(l.id));
+    }
+    return THINKING_LEVELS;
+  }, [selectedModel]);
 
   if (!isOpen) return null;
 
-  // Complete and save the assignment
-  const handleComplete = async (thinking = selectedThinking) => {
+  const handleComplete = async (thinkingOverride?: string) => {
     if (!selectedModel || !selectedRole) return;
+    const finalThinking = thinkingOverride !== undefined ? thinkingOverride : selectedThinking;
+    const modelWithThinking = finalThinking && finalThinking !== 'inherit'
+      ? `${selectedModel}:${finalThinking}`
+      : selectedModel;
 
     setIsSaving(true);
     try {
-      const formattedValue =
-        thinking && thinking !== 'inherit'
-          ? `${selectedModel}:${thinking}`
-          : selectedModel;
-
-      await onSaveRole(selectedRole, formattedValue);
+      await onSaveRole(selectedRole, modelWithThinking);
       onClose();
-    } catch (err) {
-      console.error('Failed to save role:', err);
+    } catch (e) {
+      console.error('Failed to assign role:', e);
     } finally {
       setIsSaving(false);
     }
   };
 
   const handleAddCustomRole = () => {
-    const cleaned = customRoleInput.trim().toLowerCase().replace(/[^a-z0-9_-]/g, '');
-    if (!cleaned) return;
-    const roleId = cleaned.startsWith('custom-') ? cleaned : `custom-${cleaned}`;
-    setSelectedRole(roleId);
+    const trimmed = customRoleInput.trim().toLowerCase().replace(/[^a-z0-9-_]/g, '-');
+    if (!trimmed) return;
+    const finalRoleId = trimmed.startsWith('custom-') ? trimmed : `custom-${trimmed}`;
+    setSelectedRole(finalRoleId);
     setCustomRoleInput('');
     setIsCreatingCustom(false);
     setStep(3);
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-fadeIn font-sans">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-xs animate-fadeIn select-none font-mono text-xs">
       <div 
-        className="w-full max-w-5xl h-[88vh] bg-[#0d1117] border border-omp-border rounded-2xl shadow-2xl overflow-hidden flex flex-col"
+        className="w-full max-w-4xl bg-omp-surface border border-omp-border rounded-[2px] shadow-2xl overflow-hidden flex flex-col h-[82vh] animate-scaleIn"
         onClick={(e) => e.stopPropagation()}
       >
-        {/* Wizard Header Bar */}
-        <div className="px-6 py-4 border-b border-omp-border/80 bg-omp-surface/80 flex items-center justify-between select-none shrink-0">
+        {/* Header */}
+        <div className="px-5 py-3 border-b border-omp-border flex items-center justify-between bg-omp-surface shrink-0">
           <div className="flex items-center space-x-3">
-            <div className="w-8 h-8 rounded-lg bg-omp-accent/15 border border-omp-accent/30 flex items-center justify-center text-omp-accent">
-              <Cpu size={18} />
+            <div className="w-6 h-6 bg-omp-accent text-white flex items-center justify-center font-bold rounded-[2px]">
+              <Rune name="code-server" size={13} />
             </div>
             <div>
-              <h3 className="text-sm font-semibold text-white flex items-center space-x-2">
-                <span>Model Rol Atama Sihirbazı</span>
-                <span className="text-[10px] px-2 py-0.5 rounded-full bg-omp-surface border border-omp-border font-mono text-omp-accent">
-                  Adım {step} / 3
+              <h3 className="text-xs font-bold text-white uppercase tracking-wider flex items-center space-x-2">
+                <span>06 // ROLE ASSIGNMENT WIZARD</span>
+                <span className="text-[10px] text-omp-accent font-normal">
+                  (STEP {step} / 3)
                 </span>
               </h3>
-              <p className="text-[11px] text-omp-muted">
-                {step === 1 && '1. Adım: Bir model seçin veya aratın'}
-                {step === 2 && '2. Adım: Modelin atanacağı rolü belirleyin veya yeni bir custom rol oluşturun'}
-                {step === 3 && '3. Adım: Role özgü düşünme seviyesini (Thinking Level) seçin'}
-              </p>
             </div>
           </div>
 
           {/* Stepper pills */}
-          <div className="flex items-center space-x-2 text-xs">
+          <div className="flex items-center space-x-2 text-[11px] font-mono">
             <button
               onClick={() => setStep(1)}
-              className={`px-3 py-1.5 rounded-lg border transition font-mono ${
+              className={`px-2.5 py-1 rounded-[2px] border transition ${
                 step === 1
-                  ? 'bg-omp-accent/20 border-omp-accent text-white font-semibold'
+                  ? 'bg-omp-accent text-white font-bold border-omp-accent'
                   : selectedModel
-                  ? 'bg-omp-surface border-omp-border text-omp-accent'
+                  ? 'bg-omp-bg border-omp-border text-omp-accent'
                   : 'bg-transparent border-transparent text-omp-muted'
               }`}
             >
-              1. Model: {selectedModel ? selectedModel.split('/').pop() : 'Seçilmedi'}
+              01 // MODEL: {selectedModel ? selectedModel.split('/').pop() : 'YOK'}
             </button>
 
-            <ChevronRight size={14} className="text-omp-muted" />
+            <span className="text-omp-muted">›</span>
 
             <button
               onClick={() => selectedModel && setStep(2)}
               disabled={!selectedModel}
-              className={`px-3 py-1.5 rounded-lg border transition font-mono disabled:opacity-40 ${
+              className={`px-2.5 py-1 rounded-[2px] border transition disabled:opacity-30 ${
                 step === 2
-                  ? 'bg-omp-accent/20 border-omp-accent text-white font-semibold'
+                  ? 'bg-omp-accent text-white font-bold border-omp-accent'
                   : selectedRole
-                  ? 'bg-omp-surface border-omp-border text-omp-accent'
+                  ? 'bg-omp-bg border-omp-border text-omp-accent'
                   : 'bg-transparent border-transparent text-omp-muted'
               }`}
             >
-              2. Rol: {selectedRole || 'Seçilmedi'}
+              02 // ROLE: {selectedRole || 'YOK'}
             </button>
 
-            <ChevronRight size={14} className="text-omp-muted" />
+            <span className="text-omp-muted">›</span>
 
             <button
               onClick={() => selectedModel && selectedRole && setStep(3)}
               disabled={!selectedModel || !selectedRole}
-              className={`px-3 py-1.5 rounded-lg border transition font-mono disabled:opacity-40 ${
+              className={`px-2.5 py-1 rounded-[2px] border transition disabled:opacity-30 ${
                 step === 3
-                  ? 'bg-omp-accent/20 border-omp-accent text-white font-semibold'
+                  ? 'bg-omp-accent text-white font-bold border-omp-accent'
                   : 'bg-transparent border-transparent text-omp-muted'
               }`}
             >
-              3. Thinking: {selectedThinking}
+              03 // THINK: {selectedThinking}
             </button>
 
             <button
               onClick={onClose}
-              className="ml-4 w-8 h-8 rounded-lg text-omp-muted hover:text-white hover:bg-omp-surfaceLight flex items-center justify-center transition"
+              className="ml-3 p-1 rounded-[2px] text-omp-muted hover:text-white hover:bg-omp-bg transition"
             >
-              <X size={18} />
+              <Rune name="indicators-x" size={14} />
             </button>
           </div>
         </div>
 
-        {/* Dynamic Context Breadcrumb Bar (matches omp Image #2 & #3) */}
-        <div className="h-10 px-6 border-b border-omp-border/60 bg-[#070a0e] flex items-center space-x-2 text-xs font-mono select-none shrink-0 overflow-x-auto">
-          {selectedModel && (
-            <span className="text-omp-accent font-semibold truncate max-w-xs">
-              {selectedModel.split('/').pop() || selectedModel}
-            </span>
-          )}
-
-          {step >= 2 && selectedModel && (
-            <>
-              <span className="text-omp-muted">→</span>
-              <span className="px-2 py-0.5 rounded bg-omp-accent/20 text-omp-accent font-semibold">
-                [ • {selectedRole || 'rol seçin'} ]
-              </span>
-            </>
-          )}
-
-          {step === 3 && (
-            <>
-              <span className="text-omp-muted">→</span>
-              <span className="px-2 py-0.5 rounded bg-omp-purple/20 text-omp-purple font-semibold">
-                [ 🧠 {selectedThinking} ]
-              </span>
-            </>
-          )}
-        </div>
-
         {/* Modal Body */}
-        <div className="flex-1 overflow-hidden flex">
-          {/* ================= STEP 1: MODEL SELECTION ================= */}
+        <div className="flex-1 overflow-hidden flex bg-omp-surface">
+          {/* STEP 1: MODEL SELECTION */}
           {step === 1 && (
             <div className="flex-1 flex overflow-hidden">
               {/* Left sidebar: Providers filter */}
-              <div className="w-56 border-r border-omp-border/70 bg-[#0a0d12] flex flex-col shrink-0 select-none">
-                <div className="p-3 border-b border-omp-border/60 text-[11px] font-semibold text-omp-muted uppercase tracking-wider">
-                  Sağlayıcılar ({providersWithCounts.length})
+              <div className="w-52 border-r border-omp-border bg-omp-surface flex flex-col shrink-0 select-none">
+                <div className="p-2.5 border-b border-omp-border text-[10px] font-bold text-omp-muted uppercase tracking-wider">
+                  PROVIDERS ({providersWithCounts.length})
                 </div>
-                <div className="flex-1 overflow-y-auto p-2 space-y-0.5 text-xs font-mono">
+                <div className="flex-1 overflow-y-auto p-1.5 space-y-0.5 text-xs font-mono">
                   <button
                     onClick={() => setSelectedProvider('all')}
-                    className={`w-full px-2.5 py-1.5 rounded-lg flex items-center justify-between text-left transition ${
+                    className={`w-full px-2 py-1 rounded-[2px] flex items-center justify-between text-left transition ${
                       selectedProvider === 'all'
-                        ? 'bg-omp-accent text-white font-semibold'
-                        : 'text-omp-muted hover:text-white hover:bg-omp-surfaceLight/50'
+                        ? 'bg-omp-accent text-white font-bold'
+                        : 'text-omp-muted hover:text-white hover:bg-omp-bg'
                     }`}
                   >
-                    <span>Tümü (All)</span>
-                    <span className="text-[10px] opacity-70">{availableModels.length}</span>
+                    <span>TÜMÜ (ALL)</span>
+                    <span className="text-[10px] tabular-nums">{availableModels.length}</span>
                   </button>
 
-                  {providersWithCounts.map(([prov, count]) => (
+                  {providersWithCounts.map(([prov, cnt]) => (
                     <button
                       key={prov}
                       onClick={() => setSelectedProvider(prov)}
-                      className={`w-full px-2.5 py-1.5 rounded-lg flex items-center justify-between text-left transition ${
+                      className={`w-full px-2 py-1 rounded-[2px] flex items-center justify-between text-left transition ${
                         selectedProvider === prov
-                          ? 'bg-omp-accent text-white font-semibold'
-                          : 'text-omp-muted hover:text-white hover:bg-omp-surfaceLight/50'
+                          ? 'bg-omp-accent text-white font-bold'
+                          : 'text-omp-muted hover:text-white hover:bg-omp-bg'
                       }`}
                     >
-                      <span className="truncate pr-2">• {prov}</span>
-                      <span className="text-[10px] opacity-70 shrink-0">{count}</span>
+                      <span className="truncate uppercase">{prov}</span>
+                      <span className="text-[10px] tabular-nums">{cnt}</span>
                     </button>
                   ))}
                 </div>
               </div>
 
-              {/* Right main area: Kind filters, Search & Model List */}
-              <div className="flex-1 flex flex-col overflow-hidden bg-[#0d1117]">
-                {/* Search & Kind Bar */}
-                <div className="p-4 border-b border-omp-border/70 space-y-3 bg-omp-surface/30 shrink-0">
-                  <div className="flex items-center space-x-2">
-                    <div className="flex-1 relative">
-                      <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-omp-muted" />
-                      <input
-                        type="text"
-                        value={searchQuery}
-                        onChange={(e) => setSearchQuery(e.target.value)}
-                        placeholder="Model ara... (örn: gemini-3.8-flash, claude-opus, deepseek, 1m ctx)"
-                        className="w-full bg-[#0a0d12] border border-omp-border rounded-xl pl-9 pr-3 py-2 text-xs text-white placeholder-omp-muted font-mono focus:outline-none focus:border-omp-accent"
-                      />
-                    </div>
-                  </div>
-
-                  {/* Kind filter pills (all, chat, tiny, image, etc. matching Image #1) */}
-                  <div className="flex items-center space-x-1.5 overflow-x-auto text-[11px] font-mono select-none">
-                    <span className="text-omp-muted mr-1">Kind:</span>
-                    {kinds.map((k) => (
-                      <button
-                        key={k}
-                        onClick={() => setSelectedKind(k)}
-                        className={`px-2.5 py-1 rounded-md transition ${
-                          selectedKind === k
-                            ? 'bg-omp-accent text-white font-semibold shadow-sm'
-                            : 'bg-omp-surface text-omp-muted hover:text-white border border-omp-border/60'
-                        }`}
-                      >
-                        {k}
-                      </button>
-                    ))}
+              {/* Right: Model Search & Grid */}
+              <div className="flex-1 flex flex-col bg-omp-bg overflow-hidden">
+                <div className="p-3 border-b border-omp-border bg-omp-surface">
+                  <div className="relative">
+                    <Rune name="tools-search" size={13} className="absolute left-2.5 top-2.5 text-omp-muted" />
+                    <input
+                      type="text"
+                      value={modelSearch}
+                      onChange={(e) => setModelSearch(e.target.value)}
+                      placeholder="Model ara (örn: claude, gemini, o3, deepseek)..."
+                      className="w-full bg-omp-bg border border-omp-border rounded-[2px] pl-8 pr-3 py-1.5 text-xs text-white placeholder-omp-muted focus:outline-none focus:border-omp-accent font-mono"
+                    />
                   </div>
                 </div>
 
-                {/* Model cards table/list */}
-                <div className="flex-1 overflow-y-auto p-4 space-y-2">
-                  {filteredModels.length === 0 ? (
-                    <div className="text-center py-16 text-xs text-omp-muted">
-                      Aradığınız kriterlere uygun model bulunamadı.
-                    </div>
-                  ) : (
-                    filteredModels.map((m) => {
-                      const modelSelector = m.selector || m.id;
-                      const isSelected = selectedModel === modelSelector;
-
-                      return (
-                        <div
-                          key={modelSelector}
-                          onClick={() => {
-                            setSelectedModel(modelSelector);
-                            setStep(2);
-                          }}
-                          className={`p-3 rounded-xl border cursor-pointer transition flex items-center justify-between group ${
-                            isSelected
-                              ? 'border-omp-accent bg-omp-accent/15'
-                              : 'border-omp-border/60 bg-[#0a0d12] hover:border-omp-border hover:bg-omp-surface/40'
-                          }`}
-                        >
-                          <div className="space-y-1 min-w-0 pr-4">
-                            <div className="flex items-center space-x-2">
-                              <span className="font-mono text-xs font-semibold text-white group-hover:text-omp-accent transition truncate">
-                                {modelSelector}
-                              </span>
-                              {m.kind && (
-                                <span className="px-1.5 py-0.5 rounded text-[10px] bg-omp-surface border border-omp-border text-omp-muted uppercase font-mono">
-                                  {m.kind}
-                                </span>
-                              )}
-                              {m.reasoning && (
-                                <span className="flex items-center space-x-1 text-[10px] px-1.5 py-0.5 rounded bg-pink-500/20 text-pink-400 font-mono">
-                                  <span>🧠</span>
-                                  <span>reasoning</span>
-                                </span>
-                              )}
-                            </div>
-                            <div className="text-[11px] text-omp-muted truncate font-sans">
-                              {m.name || modelSelector}
-                            </div>
-                          </div>
-
-                          <div className="flex items-center space-x-4 shrink-0 font-mono text-[11px] select-none">
-                            {m.contextWindow && (
-                              <span className="text-zinc-400">
-                                {m.contextWindow >= 1000000
-                                  ? `${(m.contextWindow / 1000000).toFixed(0)}m ctx`
-                                  : `${(m.contextWindow / 1000).toFixed(0)}k ctx`}
-                              </span>
-                            )}
-                            {m.cost && typeof m.cost.input === 'number' && (
-                              <span className="text-zinc-500">
-                                {`$${m.cost.input}/${m.cost.output}`}
-                              </span>
-                            )}
-                            <button
-                              type="button"
-                              className={`px-3 py-1.5 rounded-lg text-xs font-sans transition flex items-center space-x-1 ${
-                                isSelected
-                                  ? 'bg-omp-accent text-white font-medium'
-                                  : 'bg-omp-surface border border-omp-border text-white group-hover:bg-omp-accent group-hover:border-omp-accent'
-                              }`}
-                            >
-                              <span>Seç</span>
-                              <ChevronRight size={13} />
-                            </button>
-                          </div>
+                <div className="flex-1 overflow-y-auto p-3 grid grid-cols-1 md:grid-cols-2 gap-2">
+                  {filteredModels.map((m) => {
+                    const isSelected = selectedModel === m.id;
+                    return (
+                      <button
+                        key={m.id}
+                        type="button"
+                        onClick={() => {
+                          setSelectedModel(m.id);
+                          setStep(2);
+                        }}
+                        className={`p-3 rounded-[2px] border text-left transition flex flex-col justify-between ${
+                          isSelected
+                            ? 'border-omp-accent bg-omp-surface text-white'
+                            : 'border-omp-border/60 bg-omp-surface/60 hover:bg-omp-surface hover:border-omp-border text-zinc-300'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between w-full mb-1">
+                          <span className="font-bold text-xs font-mono text-white truncate">{m.name || m.id}</span>
+                          {isSelected && <Rune name="indicators-check" size={12} className="text-omp-accent" />}
                         </div>
-                      );
-                    })
-                  )}
+                        <div className="text-[10px] text-omp-muted font-mono flex items-center justify-between w-full mt-2 pt-1 border-t border-omp-border/40">
+                          <span className="uppercase">{m.provider}</span>
+                          <span className="tabular-nums">{m.contextWindow ? `${(m.contextWindow / 1000).toFixed(0)}k ctx` : ''}</span>
+                        </div>
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
             </div>
           )}
 
-          {/* ================= STEP 2: ROLE SELECTION & CREATION ================= */}
+          {/* STEP 2: ROLE SELECTION */}
           {step === 2 && (
-            <div className="flex-1 p-6 overflow-y-auto space-y-6">
+            <div className="flex-1 p-5 overflow-y-auto space-y-4 bg-omp-bg">
               <div className="flex items-center justify-between">
                 <div>
-                  <h4 className="text-sm font-semibold text-white">Rol Seçin veya Yeni Özel Rol Oluşturun</h4>
-                  <p className="text-xs text-omp-muted">
-                    Seçili model: <span className="text-omp-accent font-mono font-medium">{selectedModel}</span>
+                  <h4 className="text-xs font-bold text-white uppercase tracking-wider">ROL SEÇİN VEYA OLUŞTURUN</h4>
+                  <p className="text-[11px] text-omp-muted font-mono">
+                    MODEL: <span className="text-omp-accent font-bold">{selectedModel}</span>
                   </p>
                 </div>
 
                 <button
                   onClick={() => setIsCreatingCustom(!isCreatingCustom)}
-                  className="px-3.5 py-1.5 rounded-xl bg-omp-surface border border-omp-border hover:border-omp-accent text-white text-xs flex items-center space-x-1.5 transition"
+                  className="px-3 py-1 rounded-[2px] bg-omp-surface border border-omp-border hover:border-omp-accent text-white text-xs font-bold uppercase tracking-wider transition"
                 >
-                  <Plus size={14} className="text-omp-accent" />
-                  <span>+ Yeni Custom Rol Oluştur</span>
+                  <span>+ YENİ CUSTOM ROL</span>
                 </button>
               </div>
 
-              {/* Custom Role Creation Input Box */}
               {isCreatingCustom && (
-                <div className="p-4 rounded-xl border border-omp-accent/40 bg-omp-accent/10 space-y-3">
-                  <div className="text-xs text-white font-medium">Yeni Özel Rol Tanımla</div>
+                <div className="p-3 rounded-[2px] border border-omp-accent/50 bg-omp-surface space-y-2">
                   <div className="flex items-center space-x-2">
-                    <div className="flex-1 relative">
-                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-omp-muted font-mono text-xs">
-                        custom-
-                      </span>
-                      <input
-                        type="text"
-                        value={customRoleInput}
-                        onChange={(e) => setCustomRoleInput(e.target.value)}
-                        placeholder="ornek-rol (örn: review, coder, translator)"
-                        className="w-full bg-[#0a0d12] border border-omp-border rounded-xl pl-16 pr-3 py-2 text-xs text-white font-mono focus:outline-none focus:border-omp-accent"
-                      />
-                    </div>
+                    <span className="text-omp-muted font-mono text-xs">custom-</span>
+                    <input
+                      type="text"
+                      value={customRoleInput}
+                      onChange={(e) => setCustomRoleInput(e.target.value)}
+                      placeholder="rol-adi (ornek: coder, tester)..."
+                      className="flex-1 bg-omp-bg border border-omp-border rounded-[2px] px-3 py-1 text-xs text-white font-mono focus:outline-none focus:border-omp-accent"
+                    />
                     <button
                       onClick={handleAddCustomRole}
                       disabled={!customRoleInput.trim()}
-                      className="px-4 py-2 rounded-xl bg-omp-accent hover:bg-omp-accentHover disabled:opacity-40 text-white text-xs font-medium transition"
+                      className="px-4 py-1 rounded-[2px] bg-omp-accent hover:bg-omp-accentHover text-white text-xs font-bold uppercase tracking-wider"
                     >
-                      Ekle & Seç
+                      EKLE & SEÇ
                     </button>
                   </div>
-                  <p className="text-[11px] text-omp-muted">
-                    Özel roller <code className="text-omp-accent font-mono">custom-[isim]</code> şeklinde kaydedilir ve omp ortamında doğrudan kullanılabilir.
-                  </p>
                 </div>
               )}
 
-              {/* Roles Grid (built-in + custom) */}
-              <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-2.5">
                 {allRoles.map((r) => {
                   const isSelected = selectedRole === r.id;
                   const currentAssigned = currentRoles[r.id];
-                  const Icon = r.icon;
 
                   return (
                     <button
@@ -550,35 +379,32 @@ export const RoleAssignmentModal: React.FC<RoleAssignmentModalProps> = ({
                         setSelectedRole(r.id);
                         setStep(3);
                       }}
-                      className={`p-3.5 rounded-xl border text-left transition flex flex-col justify-between group ${
+                      className={`p-3 rounded-[2px] border text-left transition flex flex-col justify-between ${
                         isSelected
-                          ? 'border-omp-accent bg-omp-accent/15 ring-1 ring-omp-accent'
-                          : 'border-omp-border/70 bg-[#0a0d12] hover:border-omp-border hover:bg-omp-surface/40'
+                          ? 'border-omp-accent bg-omp-surface text-white'
+                          : 'border-omp-border/60 bg-omp-surface/60 hover:bg-omp-surface hover:border-omp-border text-zinc-300'
                       }`}
                     >
                       <div>
-                        <div className="flex items-center justify-between mb-1.5">
+                        <div className="flex items-center justify-between mb-1">
                           <div className="flex items-center space-x-2">
-                            <Icon size={15} className={isSelected ? 'text-omp-accent' : 'text-omp-muted group-hover:text-white'} />
-                            <span className="font-mono text-xs font-semibold text-white">
-                              {r.label}
-                            </span>
+                            <Rune name={r.icon} size={13} className={isSelected ? 'text-omp-accent' : 'text-omp-muted'} />
+                            <span className="font-mono text-xs font-bold text-white uppercase">{r.label}</span>
                           </div>
-                          {isSelected && <Check size={14} className="text-omp-accent" />}
+                          {isSelected && <Rune name="indicators-check" size={12} className="text-omp-accent" />}
                         </div>
-                        <p className="text-[11px] text-omp-muted leading-relaxed line-clamp-2">
+                        <p className="text-[11px] text-omp-muted font-sans leading-relaxed line-clamp-2">
                           {r.desc}
                         </p>
                       </div>
 
-                      {/* Current assignment pill */}
-                      <div className="mt-3 pt-2 border-t border-omp-border/40 text-[10px] font-mono truncate">
+                      <div className="mt-3 pt-1.5 border-t border-omp-border/40 text-[10px] font-mono truncate">
                         {currentAssigned ? (
                           <span className="text-zinc-400">
-                            Atalı: <span className="text-omp-accent">{currentAssigned.split('/').pop()}</span>
+                            ATALAN: <span className="text-omp-accent">{currentAssigned.split('/').pop()}</span>
                           </span>
                         ) : (
-                          <span className="text-zinc-600">Henüz atanmadı</span>
+                          <span className="text-zinc-600">ATANMADI</span>
                         )}
                       </div>
                     </button>
@@ -588,27 +414,21 @@ export const RoleAssignmentModal: React.FC<RoleAssignmentModalProps> = ({
             </div>
           )}
 
-          {/* ================= STEP 3: THINKING LEVEL SELECTION ================= */}
+          {/* STEP 3: THINKING LEVEL */}
           {step === 3 && (
-            <div className="flex-1 p-6 overflow-y-auto space-y-6">
+            <div className="flex-1 p-5 overflow-y-auto space-y-4 bg-omp-bg">
               <div>
-                <div className="flex items-center justify-between mb-1">
-                  <h4 className="text-sm font-semibold text-white">Düşünme Seviyesi (Thinking Level) Seçin</h4>
-                  <span className="text-[11px] font-mono px-2 py-0.5 rounded bg-omp-bg text-omp-accent border border-omp-border">
-                    {selectedModel.includes('gemini') ? 'Gemini 3.8 Flash Uyumlu' : 'Modele Özgü Seviyeler'}
-                  </span>
-                </div>
-                <p className="text-xs text-omp-muted">
-                  Atama Özeti: <span className="text-white font-mono font-medium">{selectedRole}</span> rolüne{' '}
-                  <span className="text-omp-accent font-mono font-medium">{selectedModel}</span> modeli atanıyor.
+                <h4 className="text-xs font-bold text-white uppercase tracking-wider">
+                  DÜŞÜNME SEVİYESİ (THINKING LEVEL) SEÇİN
+                </h4>
+                <p className="text-[11px] text-omp-muted font-mono">
+                  {selectedRole} = "{selectedModel}"
                 </p>
               </div>
 
-              {/* Dynamically filtered Thinking Level Cards */}
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-2.5">
                 {modelSpecificThinkingLevels.map((lvl) => {
                   const isSelected = selectedThinking === lvl.id;
-
                   return (
                     <button
                       key={lvl.id}
@@ -617,28 +437,27 @@ export const RoleAssignmentModal: React.FC<RoleAssignmentModalProps> = ({
                         setSelectedThinking(lvl.id);
                         handleComplete(lvl.id);
                       }}
-                      className={`p-4 rounded-xl border text-left transition flex flex-col justify-between group ${
+                      className={`p-3 rounded-[2px] border text-left transition flex flex-col justify-between ${
                         isSelected
-                          ? 'border-omp-accent bg-omp-accent/15 ring-1 ring-omp-accent'
-                          : 'border-omp-border/70 bg-[#0a0d12] hover:border-omp-border hover:bg-omp-surface/40'
+                          ? 'border-omp-accent bg-omp-surface text-white'
+                          : 'border-omp-border/60 bg-omp-surface/60 hover:bg-omp-surface hover:border-omp-border text-zinc-300'
                       }`}
                     >
                       <div>
                         <div className="flex items-center justify-between mb-2">
-                          <span className="text-base text-omp-accent font-mono">{lvl.symbol}</span>
-                          {isSelected && <Check size={14} className="text-omp-accent" />}
+                          <span className="text-sm font-mono text-omp-accent">{lvl.symbol}</span>
+                          {isSelected && <Rune name="indicators-check" size={12} className="text-omp-accent" />}
                         </div>
-                        <div className="font-mono text-xs font-semibold text-white mb-1">
+                        <div className="font-mono text-xs font-bold text-white uppercase mb-1">
                           {lvl.label}
                         </div>
-                        <p className="text-[11px] text-omp-muted leading-relaxed">
+                        <p className="text-[11px] text-omp-muted font-sans leading-relaxed">
                           {lvl.desc}
                         </p>
                       </div>
 
-                      <div className="mt-4 pt-2 border-t border-omp-border/40 text-[10px] font-sans text-omp-accent flex items-center justify-between">
-                        <span>Seç ve Kaydet</span>
-                        <ChevronRight size={12} />
+                      <div className="mt-3 pt-1.5 border-t border-omp-border/40 text-[10px] font-mono text-omp-accent uppercase">
+                        SEÇ & KAYDET ›
                       </div>
                     </button>
                   );
@@ -646,10 +465,10 @@ export const RoleAssignmentModal: React.FC<RoleAssignmentModalProps> = ({
               </div>
 
               {/* Summary & Manual Save */}
-              <div className="p-4 rounded-xl border border-omp-border bg-[#0a0d12] flex items-center justify-between">
+              <div className="p-3.5 rounded-[2px] border border-omp-border bg-omp-surface flex items-center justify-between">
                 <div>
-                  <div className="text-xs text-white font-medium">Yapılandırma Biçimi (omp config formatı):</div>
-                  <div className="text-xs font-mono text-omp-accent mt-0.5">
+                  <div className="text-[10px] text-omp-muted uppercase">CONFIG FORMAT:</div>
+                  <div className="text-xs font-mono text-white font-bold mt-0.5">
                     {selectedRole} = "{selectedModel}{selectedThinking !== 'inherit' ? `:${selectedThinking}` : ''}"
                   </div>
                 </div>
@@ -658,10 +477,9 @@ export const RoleAssignmentModal: React.FC<RoleAssignmentModalProps> = ({
                   type="button"
                   disabled={isSaving}
                   onClick={() => handleComplete()}
-                  className="px-5 py-2 rounded-xl bg-omp-accent hover:bg-omp-accentHover disabled:opacity-50 text-white font-medium text-xs shadow-lg transition flex items-center space-x-1.5"
+                  className="px-4 py-1.5 rounded-[2px] bg-omp-accent hover:bg-omp-accentHover text-white font-bold font-mono text-xs uppercase tracking-wider transition"
                 >
-                  <Check size={14} />
-                  <span>{isSaving ? 'Kaydediliyor...' : 'Rolü Kaydet'}</span>
+                  {isSaving ? 'KAYDEDİLİYOR...' : 'ROLÜ KAYDET'}
                 </button>
               </div>
             </div>

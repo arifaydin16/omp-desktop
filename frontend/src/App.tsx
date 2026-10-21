@@ -5,6 +5,8 @@ import { SessionsDrawer } from './components/SessionsDrawer';
 import { DevToolsDrawer } from './components/DevToolsDrawer';
 import { SettingsDialog } from './components/SettingsDialog';
 import { SkillsDrawer } from './components/SkillsDrawer';
+import { UsageDialog } from './components/UsageDialog';
+import { WorkspaceSessionsSidebar } from './components/WorkspaceSessionsSidebar';
 import { ChatMessage, AgentRunOptions, SessionSummary, ModelEntry, UpdateStatus } from './types';
 import { splitThinkingAndResponse } from './utils/textParser';
 import * as AppApi from '../wailsjs/go/main/App';
@@ -21,7 +23,14 @@ export function App() {
   const [selectedModel, setSelectedModel] = useState('google-antigravity/gemini-3.8-flash');
   const [activeDrawer, setActiveDrawer] = useState<string | null>(null);
   const [isWorking, setIsWorking] = useState(false);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [theme, setTheme] = useState<string>(() => localStorage.getItem('omp_theme') || 'cyber-violet');
 
+  // Synchronize dynamic theme to document element
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme);
+    localStorage.setItem('omp_theme', theme);
+  }, [theme]);
   // Initialize app data and event listeners
   useEffect(() => {
     // 1. Fetch Binary info
@@ -50,6 +59,20 @@ export function App() {
         }
       })
       .catch((err: unknown) => console.error('GetUpdateStatus err:', err));
+    // 4. Fetch Current Profile
+    AppApi.GetCurrentProfile()
+      .then(async (p) => {
+        if (p) setProfile(p);
+        try {
+          const roles = await AppApi.GetModelRoles();
+          if (roles && roles['default']) {
+            const def = roles['default'].split(':')[0];
+            if (def) setSelectedModel(def);
+          }
+        } catch {}
+      })
+      .catch((err: unknown) => console.error('GetCurrentProfile err:', err));
+
 
     // 4. Setup Wails Event Listeners
     const unsubStatus = EventsOn('agent:status', (data: unknown) => {
@@ -358,11 +381,50 @@ export function App() {
     }
   };
 
-  const handleResumeSession = (session: SessionSummary) => {
+  const handleResumeSession = async (session: SessionSummary) => {
     setCwd(session.cwd || '');
     if (session.model) {
       setSelectedModel(session.model);
     }
+    try {
+      const detail = await AppApi.GetSessionDetail(session.path);
+      if (detail && detail.messages && detail.messages.length > 0) {
+        const parsedMsgs: ChatMessage[] = [];
+        for (const row of detail.messages) {
+          const rowType = row.type as string;
+          if (rowType === 'message') {
+            const role = (row.role as 'user' | 'assistant' | 'system') || 'assistant';
+            let text = '';
+            if (typeof row.content === 'string') {
+              text = row.content;
+            } else if (Array.isArray(row.content)) {
+              for (const part of row.content) {
+                if (typeof part === 'string') text += part;
+                else if (part && typeof part === 'object' && 'text' in (part as Record<string, unknown>)) {
+                  text += String((part as Record<string, unknown>).text || '');
+                }
+              }
+            }
+            if (text.trim()) {
+              parsedMsgs.push({
+                id: String(row.id || 'msg_' + Math.random().toString(36).slice(2)),
+                role,
+                text,
+                timestamp: String(row.timestamp || new Date().toISOString()),
+              });
+            }
+          }
+        }
+        if (parsedMsgs.length > 0) {
+          setMessages(parsedMsgs);
+          return;
+        }
+      }
+    } catch (e) {
+      console.warn('Could not load session transcript messages:', e);
+    }
+
+    // Fallback if empty or parsing failed
     setMessages([
       {
         id: 'sys_' + Date.now(),
@@ -373,6 +435,10 @@ export function App() {
     ]);
   };
 
+  const handleNewSession = () => {
+    setMessages([]);
+    setAttachedFiles([]);
+  };
   const handleToggleDrawer = (drawerName: string) => {
     setActiveDrawer((prev) => (prev === drawerName ? null : drawerName));
   };
@@ -388,28 +454,60 @@ export function App() {
       console.error('RefreshModels err:', err);
     }
   };
+  const handleProfileChange = async (newProf: string) => {
+    setProfile(newProf);
+    try {
+      await AppApi.SetProfile(newProf);
+      const cat = await AppApi.GetModels();
+      if (cat && Array.isArray(cat.models)) {
+        setAvailableModels(cat.models);
+      }
+      const roles = await AppApi.GetModelRoles();
+      if (roles && roles['default']) {
+        const def = roles['default'].split(':')[0];
+        if (def) setSelectedModel(def);
+      }
+    } catch (e) {
+      console.error('Failed to switch profile:', e);
+    }
+  };
+
 
   return (
-    <div className="flex flex-col h-screen w-screen bg-omp-bg text-omp-text overflow-hidden font-sans">
-      {/* Top Navigation & Auto-Update Bar */}
-      <HeaderBar
-        binaryVersion={binaryVersion}
-        cwd={cwd}
-        onSelectCwd={handleSelectCwd}
-        profile={profile}
-        onChangeProfile={setProfile}
-        updateStatus={updateStatus}
-        onCheckUpdates={handleCheckUpdates}
-        onInstallUpdate={handleInstallUpdate}
-        activeDrawer={activeDrawer}
-        onToggleDrawer={handleToggleDrawer}
-        isWorking={isWorking}
-      />
+    <div className="flex flex-col h-screen w-screen bg-omp-bg text-omp-text overflow-hidden font-sans p-2 sm:p-2.5 md:p-3">
+      {/* Framed Application Window (Padding left & right, high elevation border) */}
+      <div className="flex flex-col flex-1 h-full w-full border border-omp-border rounded-[3px] bg-omp-surface overflow-hidden shadow-2xl relative">
+        {/* Top Navigation & Auto-Update Bar */}
+        <HeaderBar
+          binaryVersion={binaryVersion}
+          cwd={cwd}
+          onSelectCwd={handleSelectCwd}
+          profile={profile}
+          onChangeProfile={handleProfileChange}
+          updateStatus={updateStatus}
+          onCheckUpdates={handleCheckUpdates}
+          onInstallUpdate={handleInstallUpdate}
+          activeDrawer={activeDrawer}
+          onToggleDrawer={handleToggleDrawer}
+          isWorking={isWorking}
+          isSidebarOpen={isSidebarOpen}
+          onToggleSidebar={() => setIsSidebarOpen((prev) => !prev)}
+          theme={theme}
+          onSelectTheme={setTheme}
+        />
 
-      {/* Main Workspace (Agent Studio + Collapsible Side Panels) */}
-      <div className="flex-1 flex overflow-hidden relative">
-        {/* Central Agent Studio */}
+        {/* Main Workspace (Workspace Sessions Sidebar + Agent Studio + Collapsible Side Panels) */}
+        <div className="flex-1 flex overflow-hidden relative">
+          {/* Workspace-based Sessions Sidebar (Default Closed) */}
+          <WorkspaceSessionsSidebar
+            isOpen={isSidebarOpen}
+            onToggle={() => setIsSidebarOpen(false)}
+            currentCwd={cwd}
+            onResumeSession={handleResumeSession}
+            onNewSession={handleNewSession}
+          />
         <AgentStudio
+          profile={profile}
           messages={messages}
           isWorking={isWorking}
           onSendMessage={handleSendMessage}
@@ -425,6 +523,11 @@ export function App() {
           selectedModel={selectedModel}
           onSelectModel={setSelectedModel}
           onClearConsole={() => setMessages([])}
+          onOpenUsage={() => setActiveDrawer('usage')}
+          onOpenSkills={() => setActiveDrawer('skills')}
+          onOpenSessions={() => setActiveDrawer('sessions')}
+          onOpenSettings={() => setActiveDrawer('settings')}
+          onOpenDevTools={() => setActiveDrawer('devtools')}
         />
 
         {/* Collapsible Drawers */}
@@ -442,12 +545,18 @@ export function App() {
         <SettingsDialog
           isOpen={activeDrawer === 'settings'}
           onClose={() => setActiveDrawer(null)}
+          profile={profile}
         />
 
         <SkillsDrawer
           isOpen={activeDrawer === 'skills'}
           onClose={() => setActiveDrawer(null)}
         />
+        <UsageDialog
+          isOpen={activeDrawer === 'usage'}
+          onClose={() => setActiveDrawer(null)}
+        />
+      </div>
       </div>
     </div>
   );

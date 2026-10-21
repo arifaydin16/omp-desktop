@@ -26,6 +26,7 @@ export interface SessionSummary {
   model: string;
   updatedAt: string;
   msgCount: number;
+  totalCost?: number;
 }
 
 export interface SessionDetail {
@@ -68,6 +69,8 @@ export interface ChatMessage {
   exitCode?: number;
   toolCalls?: ToolCall[];
   workingStatus?: string;
+  cost?: number;
+  isAdvisor?: boolean;
 }
 
 export interface ToolCall {
@@ -84,4 +87,85 @@ export interface SkillItem {
   filePath: string;
   baseDir: string;
   isCustom: boolean;
+}
+
+export interface WorkspaceFileItem {
+  name: string;
+  relPath: string;
+  fullPath: string;
+  isDir: boolean;
+}
+
+export interface UsageLimit {
+  id: string;
+  label: string;
+  window: {
+    id: string;
+    label: string;
+    durationMs: number;
+    resetsAt: number;
+  };
+  amount: {
+    unit: string;
+    remainingFraction: number;
+    usedFraction: number;
+    remaining: number;
+    used: number;
+    limit: number;
+  };
+  status: 'ok' | 'warning' | 'error' | string;
+}
+
+export interface UsageReport {
+  provider: string;
+  fetchedAt: number;
+  limits: UsageLimit[];
+  metadata?: {
+    email?: string;
+    projectId?: string;
+    endpoint?: string;
+  };
+}
+
+export interface UsageCapacity {
+  window: string;
+  durationMs: number;
+  accounts: number;
+  usedAccounts: number;
+  remainingAccounts: number;
+}
+
+export interface UsageData {
+  generatedAt?: number;
+  reports?: UsageReport[];
+  capacity?: Record<string, UsageCapacity[]>;
+  rawText?: string;
+}
+
+export interface AuthCredentialItem {
+  provider: string;
+  type: string; // 'oauth' | 'api_key'
+  key?: string;
+  email?: string;
+  expires?: number;
+  projectId?: string;
+  authorizedAt?: number;
+}
+
+export interface LoginEvent {
+  type: 'started' | 'url' | 'waiting' | 'prompt' | 'success' | 'error' | 'cancelled';
+  provider?: string;
+  url?: string;
+  launchUrl?: string;
+  message?: string;
+}
+
+export interface LoginProviderDef {
+  id: string;
+  index: number;
+  name: string;
+  type: 'oauth' | 'api_key' | 'local';
+  category: 'Popular' | 'OAuth / Web' | 'API Key' | 'Local';
+  dashboardUrl?: string;
+  description?: string;
 }

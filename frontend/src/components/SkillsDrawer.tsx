@@ -1,21 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { 
-  Sparkles, 
-  Plus, 
-  Search, 
-  RefreshCw, 
-  Trash2, 
-  Edit3, 
-  Save, 
-  FileText, 
-  Check, 
-  X, 
-  Copy, 
-  Folder, 
-  BookOpen, 
-  AlertCircle,
-  Code
-} from 'lucide-react';
+import { Rune } from './Rune';
 import { SkillItem } from '../types';
 import * as AppApi from '../../wailsjs/go/main/App';
 
@@ -54,7 +38,6 @@ export const SkillsDrawer: React.FC<SkillsDrawerProps> = ({
     try {
       const list = await AppApi.GetSkillsList();
       setSkills(list || []);
-      // If a skill was selected, update its reference
       if (selectedSkill) {
         const found = (list || []).find((s) => s.name === selectedSkill.name);
         if (found) {
@@ -82,54 +65,46 @@ export const SkillsDrawer: React.FC<SkillsDrawerProps> = ({
       setLoadingContent(true);
       setDeleteConfirm(false);
       AppApi.ReadSkillContent(selectedSkill.filePath)
-        .then((content) => {
+        .then((content: string) => {
           setSkillContent(content || '');
         })
         .catch((err: unknown) => {
-          console.error('Failed to read skill content:', err);
-          setSkillContent('# İçerik okunamadı\n' + (err instanceof Error ? err.message : String(err)));
+          console.error('Failed to load skill content:', err);
+          setSkillContent('İçerik yüklenemedi: ' + String(err));
         })
-        .finally(() => setLoadingContent(false));
+        .finally(() => {
+          setLoadingContent(false);
+        });
     } else {
       setSkillContent('');
     }
   }, [selectedSkill]);
 
+  const customCount = useMemo(() => skills.filter((s) => s.isCustom).length, [skills]);
+  const registryCount = useMemo(() => skills.filter((s) => !s.isCustom).length, [skills]);
+
   const filteredSkills = useMemo(() => {
-    return skills.filter((item) => {
-      if (filterType === 'custom' && !item.isCustom) return false;
-      if (filterType === 'registry' && item.isCustom) return false;
+    return skills.filter((s) => {
+      // Type filter
+      if (filterType === 'custom' && !s.isCustom) return false;
+      if (filterType === 'registry' && s.isCustom) return false;
+
+      // Text search
       if (search.trim()) {
         const q = search.toLowerCase();
-        const n = (item.name || '').toLowerCase();
-        const d = (item.description || '').toLowerCase();
-        return n.includes(q) || d.includes(q);
+        const matchName = s.name.toLowerCase().includes(q);
+        const matchDesc = s.description?.toLowerCase().includes(q);
+        return matchName || matchDesc;
       }
       return true;
     });
   }, [skills, filterType, search]);
 
-  const customCount = useMemo(() => skills.filter((s) => s.isCustom).length, [skills]);
-  const registryCount = useMemo(() => skills.filter((s) => !s.isCustom).length, [skills]);
-
-  // Start new custom skill creation
   const handleStartCreate = () => {
-    setSelectedSkill(null);
     setEditName('');
     setEditDescription('');
     setEditContent(
-`# Yeni Beceri Yönergesi
-
-Bu beceri ajan tarafından çağrıldığında aşağıdaki talimatları uygular:
-
-## Amac ve Kapsam
-- [Becerinin ne yapacağını buraya yazın]
-
-## Kurallar ve Adımlar
-1. Kullanıcıdan gerekli girdileri kontrol et.
-2. İşlemi güvenli ve test edilmiş biçimde yürüt.
-3. Sonucu net ve anlaşılır formatta özetle.
-`
+      `---\nname: my-new-skill\ndescription: Use when the user asks for...\n---\n\n# My New Skill\n\nInstructions for the agent go here...\n`
     );
     setEditIsGlobal(true);
     setIsEditing(true);
@@ -137,56 +112,43 @@ Bu beceri ajan tarafından çağrıldığında aşağıdaki talimatları uygular
     setSaveSuccess(false);
   };
 
-  // Start editing existing skill
   const handleStartEdit = () => {
     if (!selectedSkill) return;
     setEditName(selectedSkill.name);
     setEditDescription(selectedSkill.description || '');
-    
-    // Strip frontmatter from content for clean editing if desired, or keep as body
-    let body = skillContent;
-    if (body.startsWith('---')) {
-      const parts = body.split('---');
-      if (parts.length >= 3) {
-        body = parts.slice(2).join('---').trim();
-      }
-    }
-    setEditContent(body);
-    setEditIsGlobal(true);
+    setEditContent(skillContent || '');
+    setEditIsGlobal(!selectedSkill.filePath.includes('.agents\\skills') && !selectedSkill.filePath.includes('.agents/skills'));
     setIsEditing(true);
     setErrorMessage('');
     setSaveSuccess(false);
   };
 
-  // Save skill
   const handleSaveSkill = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!editName.trim()) {
-      setErrorMessage('Lütfen beceri adı girin (örn: code-optimizer)');
+    const cleanName = editName.trim().toLowerCase().replace(/[^a-z0-9-_]/g, '-');
+    if (!cleanName) {
+      setErrorMessage('Beceri adı gereklidir.');
       return;
     }
+
     setSaving(true);
     setErrorMessage('');
     try {
-      await AppApi.SaveCustomSkill(editName, editDescription, editContent, editIsGlobal);
+      await AppApi.SaveCustomSkill(cleanName, editDescription.trim(), editContent, editIsGlobal);
       setSaveSuccess(true);
       await loadSkills();
       setTimeout(() => {
         setIsEditing(false);
         setSaveSuccess(false);
-        // Select the newly saved skill
-        const target = skills.find((s) => s.name === editName.trim().toLowerCase());
-        if (target) setSelectedSkill(target);
-      }, 600);
+      }, 1000);
     } catch (err: unknown) {
       console.error('Failed to save skill:', err);
-      setErrorMessage(err instanceof Error ? err.message : 'Beceri kaydedilirken hata oluştu');
+      setErrorMessage(err instanceof Error ? err.message : 'Beceri kaydedilirken bir hata oluştu');
     } finally {
       setSaving(false);
     }
   };
 
-  // Delete skill
   const handleDeleteSkill = async () => {
     if (!selectedSkill) return;
     setLoading(true);
@@ -212,190 +174,163 @@ Bu beceri ajan tarafından çağrıldığında aşağıdaki talimatları uygular
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex justify-end bg-black/60 backdrop-blur-sm animate-fadeIn">
+    <div className="fixed inset-0 z-50 flex justify-end bg-black/75 backdrop-blur-xs animate-fadeIn font-mono text-xs">
       <div 
-        className="w-full max-w-5xl bg-omp-surface border-l border-omp-border shadow-2xl flex flex-col h-full font-sans animate-slideLeft"
+        className="w-full max-w-5xl bg-omp-surface border-l border-omp-border shadow-2xl flex flex-col h-full animate-slideLeft"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Drawer Header */}
-        <div className="h-14 border-b border-omp-border px-6 flex items-center justify-between bg-omp-surfaceLight/40 shrink-0 select-none">
+        <div className="h-12 border-b border-omp-border px-5 flex items-center justify-between bg-omp-surface shrink-0 select-none">
           <div className="flex items-center space-x-3">
-            <div className="w-8 h-8 rounded-lg bg-omp-accent/15 border border-omp-accent/30 flex items-center justify-center text-omp-accent">
-              <Sparkles size={18} />
+            <div className="w-6 h-6 bg-omp-accent flex items-center justify-center font-bold text-white text-xs rounded-[2px]">
+              <Rune name="tools-sparkles" size={13} />
             </div>
             <div>
               <div className="flex items-center space-x-2">
-                <h2 className="text-base font-semibold text-white">Beceriler (Skills) Yöneticisi</h2>
-                <span className="text-[11px] px-2 py-0.5 rounded-full bg-omp-bg text-omp-accent border border-omp-border font-mono">
-                  {skills.length} Beceri
+                <h2 className="text-xs font-bold text-white uppercase tracking-wider">
+                  03 // SKILLS & AGENT EXTENSIONS
+                </h2>
+                <span className="text-[10px] px-1.5 py-0.5 rounded-[2px] bg-omp-bg text-omp-muted border border-omp-border tabular-nums">
+                  {skills.length}
                 </span>
               </div>
-              <p className="text-xs text-omp-muted">
-                Ajanın yetenek setleri, sistem yönergeleri ve kullanıcıya özel oluşturulan beceriler
-              </p>
             </div>
           </div>
 
-          <div className="flex items-center space-x-2.5">
+          <div className="flex items-center space-x-2">
             <button
               onClick={handleStartCreate}
-              className="px-3 py-1.5 rounded-lg bg-omp-accent hover:bg-omp-accentHover text-white text-xs font-medium flex items-center space-x-1.5 transition shadow"
+              className="px-3 py-1 rounded-[2px] bg-omp-accent hover:bg-omp-accentHover text-white text-xs font-bold uppercase tracking-wider flex items-center space-x-1.5 transition"
             >
-              <Plus size={14} />
-              <span>Yeni Skill Oluştur</span>
+              <span>+ YENİ SKILL</span>
             </button>
 
             <button
               onClick={loadSkills}
               disabled={loading}
               title="Yenile"
-              className="p-1.5 rounded-lg hover:bg-omp-border text-omp-muted hover:text-white transition"
+              className="p-1 rounded-[2px] hover:bg-omp-bg text-omp-muted hover:text-white transition"
             >
-              <RefreshCw size={15} className={loading ? 'animate-spin' : ''} />
+              <Rune name="schedule-refresh-cw" size={14} className={loading ? 'animate-spin' : ''} />
             </button>
 
             <button
               onClick={onClose}
               title="Kapat"
-              className="p-1.5 rounded-lg hover:bg-omp-border text-omp-muted hover:text-white transition"
+              className="p-1 rounded-[2px] hover:bg-omp-bg text-omp-muted hover:text-white transition"
             >
-              <X size={18} />
+              <Rune name="indicators-x" size={14} />
             </button>
           </div>
         </div>
 
         {/* Toolbar: Search & Filter Tabs */}
-        <div className="px-6 py-3 border-b border-omp-border bg-omp-bg/60 flex items-center justify-between gap-4 shrink-0 select-none">
+        <div className="px-5 py-2.5 border-b border-omp-border bg-omp-bg flex items-center justify-between gap-4 shrink-0 select-none">
           <div className="relative flex-1 max-w-md">
-            <Search size={14} className="absolute left-3 top-2.5 text-omp-muted" />
+            <Rune name="tools-search" size={13} className="absolute left-2.5 top-2 text-omp-muted" />
             <input
               type="text"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="Beceri adı veya açıklama ile ara..."
-              className="w-full bg-omp-surface border border-omp-border rounded-xl pl-9 pr-4 py-1.5 text-xs text-white placeholder-omp-muted focus:outline-none focus:border-omp-accent transition font-mono"
+              placeholder="Beceri adı veya açıklama ile filtrele..."
+              className="w-full bg-omp-surface border border-omp-border rounded-[2px] pl-8 pr-3 py-1 text-xs text-white placeholder-omp-muted focus:outline-none focus:border-omp-accent font-mono"
             />
-            {search && (
-              <button 
-                onClick={() => setSearch('')}
-                className="absolute right-2.5 top-2.5 text-omp-muted hover:text-white"
-              >
-                <X size={12} />
-              </button>
-            )}
           </div>
 
           {/* Filter tabs */}
-          <div className="flex items-center space-x-1 bg-omp-surface border border-omp-border rounded-lg p-1 text-xs">
+          <div className="flex items-center bg-omp-surface border border-omp-border rounded-[2px] divide-x divide-omp-border text-[11px] font-mono uppercase tracking-wider">
             <button
               onClick={() => setFilterType('all')}
-              className={`px-3 py-1 rounded-md transition font-medium ${
+              className={`px-3 py-1 transition ${
                 filterType === 'all'
-                  ? 'bg-omp-border text-white shadow-sm'
+                  ? 'bg-omp-surfaceLight text-white font-bold'
                   : 'text-omp-muted hover:text-white'
               }`}
             >
-              Tümü ({skills.length})
+              TÜMÜ ({skills.length})
             </button>
             <button
               onClick={() => setFilterType('custom')}
-              className={`px-3 py-1 rounded-md transition font-medium flex items-center space-x-1 ${
+              className={`px-3 py-1 transition ${
                 filterType === 'custom'
-                  ? 'bg-omp-accent/20 text-omp-accent border border-omp-accent/30 font-semibold'
+                  ? 'bg-omp-surfaceLight text-omp-accent font-bold'
                   : 'text-omp-muted hover:text-white'
               }`}
             >
-              <span>Özel / Yerel</span>
-              <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-omp-bg">
-                {customCount}
-              </span>
+              ÖZEL ({customCount})
             </button>
             <button
               onClick={() => setFilterType('registry')}
-              className={`px-3 py-1 rounded-md transition font-medium flex items-center space-x-1 ${
+              className={`px-3 py-1 transition ${
                 filterType === 'registry'
-                  ? 'bg-omp-border text-white shadow-sm'
+                  ? 'bg-omp-surfaceLight text-white font-bold'
                   : 'text-omp-muted hover:text-white'
               }`}
             >
-              <span>Registry</span>
-              <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-omp-bg">
-                {registryCount}
-              </span>
+              REGISTRY ({registryCount})
             </button>
           </div>
         </div>
 
         {/* Error message banner */}
         {errorMessage && (
-          <div className="px-6 py-2 bg-red-950/40 border-b border-red-800/50 flex items-center justify-between text-xs text-red-200">
-            <div className="flex items-center space-x-2">
-              <AlertCircle size={14} className="text-red-400" />
-              <span>{errorMessage}</span>
-            </div>
-            <button onClick={() => setErrorMessage('')} className="text-red-400 hover:text-white">
-              <X size={12} />
-            </button>
+          <div className="px-5 py-2 bg-omp-error/15 border-b border-omp-error/40 flex items-center justify-between text-xs text-omp-error font-mono">
+            <span>{errorMessage}</span>
+            <button onClick={() => setErrorMessage('')} className="hover:text-white font-bold">✕</button>
           </div>
         )}
 
         {/* Main Split Body: Left List / Right Viewer or Editor */}
         <div className="flex-1 flex overflow-hidden">
           {/* Left Column: Skills List */}
-          <div className="w-80 md:w-96 border-r border-omp-border bg-[#0a0d12] flex flex-col shrink-0">
-            <div className="p-3 border-b border-omp-border/60 text-[11px] text-omp-muted flex items-center justify-between select-none">
-              <span>Mevcut Beceriler ({filteredSkills.length})</span>
-              <span>{filterType === 'custom' ? 'Özel' : filterType === 'registry' ? 'Registry' : 'Tümü'}</span>
+          <div className="w-80 md:w-96 border-r border-omp-border bg-omp-surface flex flex-col shrink-0">
+            <div className="p-2.5 border-b border-omp-border text-[10px] text-omp-muted flex items-center justify-between select-none uppercase tracking-wider">
+              <span>LIST // ({filteredSkills.length})</span>
+              <span>{filterType.toUpperCase()}</span>
             </div>
 
-            <div className="flex-1 overflow-y-auto p-2.5 space-y-1.5">
+            <div className="flex-1 overflow-y-auto p-2 space-y-1">
               {loading && skills.length === 0 ? (
                 <div className="p-8 text-center text-xs text-omp-muted flex flex-col items-center space-y-2">
-                  <RefreshCw size={20} className="animate-spin text-omp-accent" />
-                  <span>Beceriler taranıyor...</span>
+                  <Rune name="schedule-refresh-cw" size={16} className="animate-spin text-omp-accent" />
+                  <span>TARANIYOR...</span>
                 </div>
               ) : filteredSkills.length === 0 ? (
                 <div className="p-8 text-center text-xs text-omp-muted">
-                  {search ? 'Aramaya uygun beceri bulunamadı.' : 'Henüz bu kategoride beceri yok.'}
+                  {search ? 'ARAMAYA UYGUN BECERİ BULUNAMADI.' : 'HENÜZ BECERİ YOK.'}
                 </div>
               ) : (
                 filteredSkills.map((sk) => {
                   const isSelected = selectedSkill?.name === sk.name && !isEditing;
                   return (
-                    <div
+                    <button
                       key={sk.name}
                       onClick={() => {
                         setSelectedSkill(sk);
                         setIsEditing(false);
                       }}
-                      className={`p-3 rounded-xl border text-left cursor-pointer transition-all ${
+                      className={`w-full text-left p-2.5 rounded-[2px] border transition-colors flex flex-col space-y-1 ${
                         isSelected
-                          ? 'bg-omp-accent/15 border-omp-accent text-white shadow-md'
-                          : 'bg-omp-surface/50 border-omp-border/70 hover:border-omp-muted hover:bg-omp-surfaceLight/30 text-zinc-300'
+                          ? 'border-omp-accent bg-omp-bg text-white'
+                          : 'border-omp-border/60 bg-omp-bg/60 hover:bg-omp-bg hover:border-omp-border text-zinc-300'
                       }`}
                     >
-                      <div className="flex items-start justify-between gap-2 mb-1">
-                        <div className="flex items-center space-x-1.5 min-w-0">
-                          <BookOpen size={14} className={isSelected ? 'text-omp-accent' : 'text-omp-muted shrink-0'} />
-                          <span className="font-mono text-xs font-semibold text-white truncate">
-                            {sk.name}
-                          </span>
-                        </div>
+                      <div className="flex items-center justify-between w-full">
+                        <span className="font-bold text-xs font-mono tracking-tight text-white">{sk.name}</span>
                         <span
-                          className={`text-[9px] px-1.5 py-0.5 rounded font-medium shrink-0 uppercase tracking-wider ${
+                          className={`text-[9px] px-1.5 py-0.2 rounded-[2px] font-bold uppercase tracking-wider ${
                             sk.isCustom
-                              ? 'bg-emerald-950/70 text-emerald-300 border border-emerald-800/50'
-                              : 'bg-blue-950/60 text-blue-300 border border-blue-800/40'
+                              ? 'bg-omp-accent/15 text-omp-accent border border-omp-accent/30'
+                              : 'bg-zinc-800 text-zinc-300'
                           }`}
                         >
-                          {sk.isCustom ? 'Özel' : 'Registry'}
+                          {sk.isCustom ? 'ÖZEL' : 'REG'}
                         </span>
                       </div>
-
-                      <p className="text-[11px] text-omp-muted line-clamp-2 leading-relaxed">
+                      <p className="text-[11px] text-omp-muted line-clamp-2 leading-relaxed font-sans">
                         {sk.description || 'Açıklama belirtilmemiş.'}
                       </p>
-                    </div>
+                    </button>
                   );
                 })
               )}
@@ -405,154 +340,130 @@ Bu beceri ajan tarafından çağrıldığında aşağıdaki talimatları uygular
           {/* Right Column: Skill Viewer or Custom Skill Editor */}
           <div className="flex-1 flex flex-col bg-omp-bg overflow-hidden">
             {isEditing ? (
-              /* ================= CUSTOM SKILL EDITOR ================= */
+              /* Custom Skill Editor */
               <form onSubmit={handleSaveSkill} className="flex-1 flex flex-col overflow-hidden">
-                <div className="p-4 border-b border-omp-border bg-omp-surfaceLight/30 flex items-center justify-between shrink-0 select-none">
-                  <div className="flex items-center space-x-2">
-                    <Edit3 size={16} className="text-omp-accent" />
-                    <div>
-                      <h3 className="text-sm font-semibold text-white">
-                        {editName ? `Beceriyi Düzenle: ${editName}` : 'Yeni Özel Beceri (Skill) Oluştur'}
-                      </h3>
-                      <p className="text-[11px] text-omp-muted">
-                        Standart YAML frontmatter ve Markdown yönergeleri ile oluşturulur (~/.agents/skills/)
-                      </p>
-                    </div>
+                <div className="p-3.5 border-b border-omp-border bg-omp-surface flex items-center justify-between shrink-0 select-none">
+                  <div>
+                    <h3 className="text-xs font-bold text-white uppercase tracking-wider">
+                      {editName ? `EDIT // ${editName}` : 'CREATE // NEW SKILL'}
+                    </h3>
                   </div>
 
                   <div className="flex items-center space-x-2">
                     <button
                       type="button"
                       onClick={() => setIsEditing(false)}
-                      className="px-3 py-1.5 rounded-lg border border-omp-border hover:bg-omp-border text-xs text-omp-muted hover:text-white transition"
+                      className="px-3 py-1 rounded-[2px] border border-omp-border hover:bg-omp-surfaceLight text-xs text-omp-muted hover:text-white transition uppercase"
                     >
-                      İptal
+                      İPTAL
                     </button>
                     <button
                       type="submit"
                       disabled={saving}
-                      className="px-4 py-1.5 rounded-lg bg-omp-accent hover:bg-omp-accentHover text-white text-xs font-medium flex items-center space-x-1.5 transition shadow"
+                      className="px-4 py-1 rounded-[2px] bg-omp-accent hover:bg-omp-accentHover text-white text-xs font-bold uppercase tracking-wider flex items-center space-x-1.5 transition"
                     >
                       {saving ? (
-                        <RefreshCw size={13} className="animate-spin" />
+                        <Rune name="schedule-refresh-cw" size={12} className="animate-spin" />
                       ) : saveSuccess ? (
-                        <Check size={13} className="text-emerald-300" />
-                      ) : (
-                        <Save size={13} />
-                      )}
-                      <span>{saving ? 'Kaydediliyor...' : saveSuccess ? 'Kaydedildi!' : 'Kaydet & Aktif Et'}</span>
+                        <Rune name="indicators-check" size={12} />
+                      ) : null}
+                      <span>{saving ? 'KAYDEDİLİYOR...' : saveSuccess ? 'KAYDEDİLDİ' : 'KAYDET & AKTİF ET'}</span>
                     </button>
                   </div>
                 </div>
 
-                <div className="flex-1 overflow-y-auto p-6 space-y-5 text-xs">
-                  {/* Skill Name */}
+                <div className="flex-1 overflow-y-auto p-5 space-y-4 text-xs font-mono">
                   <div>
-                    <label className="block text-white font-medium mb-1.5">
-                      Beceri Adı (kebab-case): <span className="text-red-400">*</span>
+                    <label className="block text-white font-bold mb-1 uppercase text-[11px]">
+                      SKILL ADI (kebab-case): <span className="text-omp-accent">*</span>
                     </label>
                     <input
                       type="text"
                       required
                       value={editName}
                       onChange={(e) => setEditName(e.target.value.toLowerCase().replace(/[^a-z0-9-_]/g, '-'))}
-                      placeholder="Örn: code-reviewer, test-generator, security-guard"
-                      className="w-full bg-omp-surface border border-omp-border rounded-xl px-3.5 py-2 text-white font-mono focus:outline-none focus:border-omp-accent transition"
+                      placeholder="code-reviewer, test-generator..."
+                      className="w-full bg-omp-surface border border-omp-border rounded-[2px] px-3 py-1.5 text-white font-mono focus:outline-none focus:border-omp-accent"
                     />
-                    <p className="text-[10px] text-omp-muted mt-1">
-                      Ajanın bu beceriyi tanıyacağı benzersiz kod (otomatik kebab-case yapılır).
-                    </p>
                   </div>
 
-                  {/* Trigger Description */}
                   <div>
-                    <label className="block text-white font-medium mb-1.5">
-                      Tetikleme Açıklaması (Description / Trigger Rules):
+                    <label className="block text-white font-bold mb-1 uppercase text-[11px]">
+                      TRIGGER RULES / DESCRIPTION:
                     </label>
                     <textarea
                       rows={2}
                       value={editDescription}
                       onChange={(e) => setEditDescription(e.target.value)}
-                      placeholder='Örn: Use when the user asks for code review, refactoring advice, or bug inspections...'
-                      className="w-full bg-omp-surface border border-omp-border rounded-xl px-3.5 py-2 text-white focus:outline-none focus:border-omp-accent transition resize-none leading-relaxed"
+                      placeholder="Use when the user asks for code review..."
+                      className="w-full bg-omp-surface border border-omp-border rounded-[2px] px-3 py-1.5 text-white focus:outline-none focus:border-omp-accent resize-none font-mono text-xs"
                     />
-                    <p className="text-[10px] text-omp-muted mt-1">
-                      Ajan bu açıklamayı okuyarak kullanıcının hangi komutlarında bu beceriyi devreye alacağını belirler.
-                    </p>
                   </div>
 
-                  {/* Scope */}
-                  <div className="flex items-center space-x-6 p-3 rounded-xl border border-omp-border bg-omp-surface/40">
-                    <span className="font-medium text-white">Kayıt Konumu:</span>
+                  <div className="flex items-center space-x-6 p-2.5 rounded-[2px] border border-omp-border bg-omp-surface">
+                    <span className="font-bold text-white uppercase text-[11px]">KONUM:</span>
                     <label className="flex items-center space-x-2 cursor-pointer text-omp-muted hover:text-white">
                       <input
                         type="radio"
                         checked={editIsGlobal}
                         onChange={() => setEditIsGlobal(true)}
-                        className="text-omp-accent focus:ring-0"
+                        className="text-omp-accent"
                       />
-                      <span>Genel Kullanıcı (~/.agents/skills/)</span>
+                      <span>GENEL (~/.agents/skills/)</span>
                     </label>
                     <label className="flex items-center space-x-2 cursor-pointer text-omp-muted hover:text-white">
                       <input
                         type="radio"
                         checked={!editIsGlobal}
                         onChange={() => setEditIsGlobal(false)}
-                        className="text-omp-accent focus:ring-0"
+                        className="text-omp-accent"
                       />
-                      <span>Yalnızca Bu Proje (.agents/skills/)</span>
+                      <span>PROJE (.agents/skills/)</span>
                     </label>
                   </div>
 
-                  {/* Skill Markdown Body */}
                   <div className="flex-1 flex flex-col min-h-[300px]">
-                    <div className="flex items-center justify-between mb-1.5">
-                      <label className="text-white font-medium flex items-center space-x-1.5">
-                        <Code size={14} className="text-omp-accent" />
-                        <span>Beceri Yönergesi (SKILL.md Markdown İçeriği):</span>
-                      </label>
-                      <span className="text-[10px] text-omp-muted font-mono">Markdown Formatı Desteklenir</span>
-                    </div>
+                    <label className="block text-white font-bold mb-1 uppercase text-[11px]">
+                      SKILL.MD MARKDOWN YÖNERGESİ:
+                    </label>
                     <textarea
                       rows={14}
                       value={editContent}
                       onChange={(e) => setEditContent(e.target.value)}
-                      placeholder="# Beceri Başlığı&#10;&#10;Ajan talimatları buraya yazılır..."
-                      className="w-full flex-1 bg-omp-surface border border-omp-border rounded-xl p-3.5 text-white font-mono text-xs focus:outline-none focus:border-omp-accent transition resize-y leading-relaxed"
+                      placeholder="# Beceri Başlığı..."
+                      className="w-full flex-1 bg-omp-surface border border-omp-border rounded-[2px] p-3 text-white font-mono text-xs focus:outline-none focus:border-omp-accent resize-y leading-relaxed"
                     />
                   </div>
                 </div>
               </form>
             ) : selectedSkill ? (
-              /* ================= SKILL VIEWER ================= */
+              /* Skill Viewer */
               <div className="flex-1 flex flex-col overflow-hidden">
-                {/* Header */}
-                <div className="p-4 border-b border-omp-border bg-omp-surfaceLight/30 flex items-start justify-between shrink-0">
+                <div className="p-3.5 border-b border-omp-border bg-omp-surface flex items-start justify-between shrink-0">
                   <div className="space-y-1">
                     <div className="flex items-center space-x-2.5">
-                      <h3 className="text-base font-bold text-white font-mono">
+                      <h3 className="text-sm font-bold text-white font-mono uppercase tracking-tight">
                         {selectedSkill.name}
                       </h3>
                       <span
-                        className={`text-[10px] px-2 py-0.5 rounded font-semibold uppercase tracking-wider ${
+                        className={`text-[9px] px-1.5 py-0.2 rounded-[2px] font-bold uppercase tracking-wider ${
                           selectedSkill.isCustom
-                            ? 'bg-emerald-950/80 text-emerald-300 border border-emerald-700/60'
-                            : 'bg-blue-950/70 text-blue-300 border border-blue-700/50'
+                            ? 'bg-omp-accent/15 text-omp-accent border border-omp-accent/40'
+                            : 'bg-zinc-800 text-zinc-300'
                         }`}
                       >
-                        {selectedSkill.isCustom ? 'Özel / Yerel Beceri' : 'Skillshare Registry Becerisi'}
+                        {selectedSkill.isCustom ? 'ÖZEL SKILL' : 'REGISTRY SKILL'}
                       </span>
                     </div>
 
-                    <div className="flex items-center space-x-2 text-[11px] text-omp-muted font-mono">
-                      <Folder size={12} className="shrink-0" />
+                    <div className="flex items-center space-x-2 text-[10px] text-omp-muted font-mono">
                       <span className="truncate max-w-lg">{selectedSkill.filePath}</span>
                       <button
                         onClick={() => copyPathOrContent(selectedSkill.filePath)}
                         title="Yolu Kopyala"
-                        className="text-omp-muted hover:text-white transition"
+                        className="text-omp-muted hover:text-white"
                       >
-                        {copied ? <Check size={12} className="text-emerald-400" /> : <Copy size={12} />}
+                        <Rune name="code-copy" size={11} />
                       </button>
                     </div>
                   </div>
@@ -560,94 +471,89 @@ Bu beceri ajan tarafından çağrıldığında aşağıdaki talimatları uygular
                   <div className="flex items-center space-x-2">
                     <button
                       onClick={handleStartEdit}
-                      className="px-3 py-1.5 rounded-lg border border-omp-border hover:bg-omp-border text-xs text-white flex items-center space-x-1.5 transition"
+                      className="px-3 py-1 rounded-[2px] border border-omp-border hover:bg-omp-surfaceLight text-xs text-white uppercase font-bold transition"
                     >
-                      <Edit3 size={13} className="text-omp-accent" />
-                      <span>Düzenle</span>
+                      DÜZENLE
                     </button>
 
                     {deleteConfirm ? (
-                      <div className="flex items-center space-x-1 bg-red-950/80 border border-red-700/80 rounded-lg p-1">
-                        <span className="text-[10px] text-red-200 px-1">Emin misiniz?</span>
+                      <div className="flex items-center space-x-1 bg-omp-error/20 border border-omp-error/50 rounded-[2px] p-1 font-mono">
+                        <span className="text-[10px] text-white px-1">SİLİNSİN Mİ?</span>
                         <button
                           onClick={handleDeleteSkill}
-                          className="px-2 py-0.5 bg-red-600 hover:bg-red-700 text-white text-[10px] rounded font-medium"
+                          className="px-2 py-0.5 bg-omp-error text-white text-[10px] rounded-[2px] font-bold"
                         >
-                          Evet, Sil
+                          EVET
                         </button>
                         <button
                           onClick={() => setDeleteConfirm(false)}
                           className="px-1.5 py-0.5 text-zinc-400 hover:text-white text-[10px]"
                         >
-                          Vazgeç
+                          İPTAL
                         </button>
                       </div>
                     ) : (
                       <button
                         onClick={() => setDeleteConfirm(true)}
-                        className="p-1.5 rounded-lg border border-omp-border hover:border-red-800 hover:bg-red-950/40 text-omp-muted hover:text-red-300 transition"
+                        className="p-1 rounded-[2px] border border-omp-border hover:border-omp-error text-omp-muted hover:text-omp-error transition"
                         title="Beceriyi Sil"
                       >
-                        <Trash2 size={15} />
+                        <Rune name="tools-trash-2" size={13} />
                       </button>
                     )}
                   </div>
                 </div>
 
-                {/* Description Callout */}
-                <div className="p-4 bg-omp-surface/60 border-b border-omp-border shrink-0">
-                  <div className="text-[11px] font-semibold text-omp-accent mb-1 select-none">
-                    Tetikleme ve Kullanım Koşulları:
+                <div className="p-3 bg-omp-surface/50 border-b border-omp-border shrink-0">
+                  <div className="text-[10px] font-bold uppercase tracking-wider text-omp-accent mb-1 font-mono">
+                    TRIGGER RULES:
                   </div>
-                  <p className="text-xs text-zinc-300 leading-relaxed font-sans">
-                    {selectedSkill.description || 'Bu beceri için özel tetikleme kuralı yazılmamış.'}
+                  <p className="text-xs text-zinc-300 font-sans leading-relaxed">
+                    {selectedSkill.description || 'Özel tetikleme kuralı tanımlanmamış.'}
                   </p>
                 </div>
 
-                {/* Content Body */}
-                <div className="flex-1 flex flex-col overflow-hidden p-4">
-                  <div className="flex items-center justify-between pb-2 mb-2 border-b border-omp-border/60 text-[11px] text-omp-muted select-none">
-                    <span className="flex items-center space-x-1.5">
-                      <FileText size={13} className="text-omp-accent" />
-                      <span>SKILL.md Yönerge İçeriği</span>
-                    </span>
+                <div className="flex-1 flex flex-col overflow-hidden p-3 font-mono">
+                  <div className="flex items-center justify-between pb-1.5 mb-1.5 border-b border-omp-border text-[10px] text-omp-muted select-none uppercase tracking-wider">
+                    <span>SKILL.MD // INSTRUCTIONS</span>
                     <button
                       onClick={() => copyPathOrContent(skillContent)}
-                      className="flex items-center space-x-1 hover:text-white transition"
+                      className="hover:text-white flex items-center space-x-1"
                     >
-                      {copied ? <Check size={12} className="text-emerald-400" /> : <Copy size={12} />}
-                      <span>{copied ? 'Kopyalandı' : 'İçeriği Kopyala'}</span>
+                      <Rune name="code-copy" size={11} />
+                      <span>{copied ? 'KOPYALANDI' : 'KOPYALA'}</span>
                     </button>
                   </div>
 
-                  <div className="flex-1 overflow-y-auto bg-[#0a0d12] border border-omp-border rounded-xl p-4 font-mono text-xs text-zinc-300 leading-relaxed whitespace-pre-wrap select-text">
+                  <div className="flex-1 overflow-y-auto bg-omp-surface border border-omp-border rounded-[2px] p-3 text-xs text-zinc-200 leading-relaxed whitespace-pre-wrap select-text">
                     {loadingContent ? (
                       <div className="flex items-center justify-center h-full text-omp-muted space-x-2">
-                        <RefreshCw size={16} className="animate-spin text-omp-accent" />
-                        <span>SKILL.md yükleniyor...</span>
+                        <Rune name="schedule-refresh-cw" size={14} className="animate-spin text-omp-accent" />
+                        <span>YÜKLENİYOR...</span>
                       </div>
                     ) : (
-                      skillContent || 'Bu dosya henüz boş.'
+                      skillContent || 'Dosya boş.'
                     )}
                   </div>
                 </div>
               </div>
             ) : (
-              /* ================= EMPTY STATE ================= */
+              /* Empty State */
               <div className="flex-1 flex flex-col items-center justify-center p-8 text-center select-none text-omp-muted">
-                <div className="w-16 h-16 rounded-2xl bg-omp-surface border border-omp-border flex items-center justify-center text-omp-accent mb-4 shadow-lg">
-                  <Sparkles size={28} />
+                <div className="w-12 h-12 bg-omp-surface border border-omp-border rounded-[2px] flex items-center justify-center text-omp-accent mb-4">
+                  <Rune name="tools-sparkles" size={20} />
                 </div>
-                <h4 className="text-base font-semibold text-white mb-1">Bir Beceri Seçin veya Yenisini Oluşturun</h4>
-                <p className="text-xs max-w-sm mb-6 leading-relaxed">
-                  Sol taraftaki listeden mevcut bir becerinin kurallarını inceleyebilir veya kendi özel becerinizi ekleyebilirsiniz.
+                <h4 className="text-xs font-bold uppercase tracking-wider text-white mb-1">
+                  BİR BECERİ SEÇİN VEYA OLUŞTURUN
+                </h4>
+                <p className="text-xs max-w-sm mb-6 leading-relaxed font-sans">
+                  Ajanın yönergelerini incelemek veya sisteme yeni yetenekler tanımlamak için seçim yapın.
                 </p>
                 <button
                   onClick={handleStartCreate}
-                  className="px-4 py-2 rounded-xl bg-omp-accent hover:bg-omp-accentHover text-white text-xs font-semibold flex items-center space-x-2 transition shadow-lg"
+                  className="px-4 py-1.5 rounded-[2px] bg-omp-accent hover:bg-omp-accentHover text-white text-xs font-bold uppercase tracking-wider transition"
                 >
-                  <Plus size={15} />
-                  <span>Yeni Özel Skill Oluştur</span>
+                  + YENİ ÖZEL SKILL
                 </button>
               </div>
             )}

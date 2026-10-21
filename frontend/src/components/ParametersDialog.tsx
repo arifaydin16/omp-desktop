@@ -1,16 +1,5 @@
 import React, { useState } from 'react';
-import { 
-  X, 
-  Sliders, 
-  Shield, 
-  Cpu, 
-  BrainCircuit, 
-  Check, 
-  Zap, 
-  Clock, 
-  Layers,
-  Sparkles
-} from 'lucide-react';
+import { Rune } from './Rune';
 import { ModelEntry } from '../types';
 
 export interface ThinkingLevelOption {
@@ -22,7 +11,6 @@ export interface ThinkingLevelOption {
 export function getAvailableThinkingLevels(modelId: string): ThinkingLevelOption[] {
   const m = (modelId || '').toLowerCase();
 
-  // Google Gemini modelleri için resmi ve geçerli düşünme seviyeleri
   if (m.includes('gemini')) {
     return [
       { value: 'auto', label: 'auto (Varsayılan)', description: 'Model karmaşıklığa göre düşünme miktarını otomatik belirler' },
@@ -32,7 +20,6 @@ export function getAvailableThinkingLevels(modelId: string): ThinkingLevelOption
     ];
   }
 
-  // Anthropic Claude modelleri için seviyeler
   if (m.includes('claude')) {
     return [
       { value: 'auto', label: 'auto (Otomatik)', description: 'Uyarlanabilir düşünme bütçesi' },
@@ -44,7 +31,6 @@ export function getAvailableThinkingLevels(modelId: string): ThinkingLevelOption
     ];
   }
 
-  // OpenAI reasoning modelleri için seviyeler
   if (m.includes('o1') || m.includes('o3') || m.includes('gpt-5')) {
     return [
       { value: 'auto', label: 'auto (Otomatik)', description: 'Standart akıl yürütme eforu' },
@@ -54,21 +40,17 @@ export function getAvailableThinkingLevels(modelId: string): ThinkingLevelOption
     ];
   }
 
-  // Genel modeller için
   return [
-    { value: 'auto', label: 'auto (Otomatik)', description: 'Varsayılan model davranışı' },
-    { value: 'off', label: 'off (Kapalı)', description: 'Düşünme kapalı' },
-    { value: 'low', label: 'low (Düşük)', description: 'Kısa akıl yürütme' },
-    { value: 'medium', label: 'medium (Orta)', description: 'Orta seviye akıl yürütme' },
-    { value: 'high', label: 'high (Yüksek)', description: 'Yüksek akıl yürütme' },
+    { value: 'auto', label: 'auto (Otomatik)', description: 'Modelin varsayılan akıl yürütme seviyesi' },
+    { value: 'off', label: 'off (Kapalı)', description: 'Düşünme adımları olmadan doğrudan yanıt' },
+    { value: 'low', label: 'low (Düşük)', description: 'Hafif düşünme adımları' },
+    { value: 'high', label: 'high (Yüksek)', description: 'Maksimum akıl yürütme ve planlama' },
   ];
 }
 
 interface ParametersDialogProps {
   isOpen: boolean;
   onClose: () => void;
-  onOpenRoleWizard?: () => void;
-  // Models & Roles
   availableModels: ModelEntry[];
   selectedModel: string;
   onSelectModel: (m: string) => void;
@@ -78,42 +60,35 @@ interface ParametersDialogProps {
   onSelectSlowModel: (m: string) => void;
   planModel: string;
   onSelectPlanModel: (m: string) => void;
-  advisorModel: string;
-  onSelectAdvisorModel: (m: string) => void;
-  advisorEnabled: boolean;
-  onToggleAdvisor: (enabled: boolean) => void;
-  // Thinking & Approvals
+  advisorModel?: string;
+  onSelectAdvisorModel?: (m: string) => void;
+  advisorEnabled?: boolean;
   thinkingLevel: string;
-  onSelectThinkingLevel: (tl: string) => void;
+  onSelectThinkingLevel: (level: string) => void;
   approvalMode: string;
   onSelectApprovalMode: (mode: string) => void;
   autoApprove: boolean;
   onToggleAutoApprove: (v: boolean) => void;
-  // Flags
   goalMode: boolean;
   onToggleGoalMode: (v: boolean) => void;
   planYolo: boolean;
   onTogglePlanYolo: (v: boolean) => void;
   prewalk: boolean;
   onTogglePrewalk: (v: boolean) => void;
+  advisor?: boolean;
+  onToggleAdvisor: (v: boolean) => void;
+  onOpenRoleWizard?: () => void;
 }
 
 export const ParametersDialog: React.FC<ParametersDialogProps> = ({
   isOpen,
   onClose,
-  availableModels,
   selectedModel,
   onSelectModel,
-  smolModel,
   onSelectSmolModel,
-  slowModel,
   onSelectSlowModel,
-  planModel,
   onSelectPlanModel,
-  advisorModel,
   onSelectAdvisorModel,
-  advisorEnabled,
-  onToggleAdvisor,
   thinkingLevel,
   onSelectThinkingLevel,
   approvalMode,
@@ -126,7 +101,7 @@ export const ParametersDialog: React.FC<ParametersDialogProps> = ({
   onTogglePlanYolo,
   prewalk,
   onTogglePrewalk,
-  onOpenRoleWizard,
+  onToggleAdvisor,
 }) => {
   const [activeTab, setActiveTab] = useState<'thinking' | 'flags'>('thinking');
 
@@ -135,70 +110,72 @@ export const ParametersDialog: React.FC<ParametersDialogProps> = ({
   const validThinkingLevels = getAvailableThinkingLevels(selectedModel);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-fadeIn">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-xs animate-fadeIn select-none font-mono text-xs">
       <div 
-        className="w-full max-w-2xl bg-omp-surface border border-omp-border rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[85vh] font-sans"
+        className="w-full max-w-2xl bg-omp-surface border border-omp-border rounded-[2px] shadow-2xl overflow-hidden flex flex-col max-h-[85vh] animate-scaleIn"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Modal Header */}
-        <div className="px-6 py-4 border-b border-omp-border flex items-center justify-between bg-omp-surfaceLight/40 select-none">
-          <div className="flex items-center space-x-2.5">
-            <div className="w-8 h-8 rounded-lg bg-omp-accent/15 border border-omp-accent/30 flex items-center justify-center text-omp-accent">
-              <Sliders size={18} />
+        <div className="px-5 py-3 border-b border-omp-border flex items-center justify-between bg-omp-surface">
+          <div className="flex items-center space-x-3">
+            <div className="w-6 h-6 bg-omp-accent text-white flex items-center justify-center font-bold rounded-[2px]">
+              <Rune name="metrics-sliders-horizontal" size={13} />
             </div>
             <div>
-              <h3 className="text-base font-semibold text-white">Çalıştırma Parametreleri</h3>
-              <p className="text-xs text-omp-muted">Düşünme düzeyi, araç izinleri ve omp çalışma bayrakları</p>
+              <h3 className="text-xs font-bold text-white uppercase tracking-wider">
+                05 // EXECUTION PARAMETERS & REASONING
+              </h3>
+              <p className="text-[11px] text-omp-muted">Düşünme düzeyi, araç izinleri ve omp çalışma bayrakları</p>
             </div>
           </div>
 
           <button
             onClick={onClose}
-            className="w-8 h-8 rounded-lg text-omp-muted hover:text-white hover:bg-omp-surfaceLight flex items-center justify-center transition"
+            className="p-1 rounded-[2px] hover:bg-omp-bg text-omp-muted hover:text-white transition"
           >
-            <X size={18} />
+            <Rune name="indicators-x" size={14} />
           </button>
         </div>
 
         {/* Modal Tabs */}
-        <div className="flex border-b border-omp-border bg-omp-bg/50 px-6 text-xs select-none">
+        <div className="flex border-b border-omp-border bg-omp-bg px-4 text-xs divide-x divide-omp-border/60">
           <button
             onClick={() => setActiveTab('thinking')}
-            className={`py-3 px-4 font-medium border-b-2 transition flex items-center space-x-2 ${
+            className={`py-2 px-3 font-mono text-[11px] uppercase tracking-wider transition flex items-center space-x-1.5 ${
               activeTab === 'thinking'
-                ? 'border-omp-accent text-white'
-                : 'border-transparent text-omp-muted hover:text-white'
+                ? 'bg-omp-surface text-white font-bold border-b-2 border-b-omp-accent'
+                : 'text-omp-muted hover:text-white'
             }`}
           >
-            <BrainCircuit size={14} />
-            <span>Düşünme & İzinler</span>
+            <Rune name="tools-sparkles" size={12} className={activeTab === 'thinking' ? 'text-omp-accent' : ''} />
+            <span>01 // DÜŞÜNME & İZİNLER</span>
           </button>
           <button
             onClick={() => setActiveTab('flags')}
-            className={`py-3 px-4 font-medium border-b-2 transition flex items-center space-x-2 ${
+            className={`py-2 px-3 font-mono text-[11px] uppercase tracking-wider transition flex items-center space-x-1.5 ${
               activeTab === 'flags'
-                ? 'border-omp-accent text-white'
-                : 'border-transparent text-omp-muted hover:text-white'
+                ? 'bg-omp-surface text-white font-bold border-b-2 border-b-omp-accent'
+                : 'text-omp-muted hover:text-white'
             }`}
           >
-            <Zap size={14} />
-            <span>Ajan Bayrakları</span>
+            <Rune name="other-zap" size={12} className={activeTab === 'flags' ? 'text-omp-accent' : ''} />
+            <span>02 // AJAN BAYRAKLARI</span>
           </button>
         </div>
 
         {/* Modal Body */}
-        <div className="p-6 overflow-y-auto space-y-6 flex-1 text-xs">
+        <div className="p-5 overflow-y-auto space-y-5 flex-1 text-xs bg-omp-surface">
           {activeTab === 'thinking' && (
-            <div className="space-y-5">
+            <div className="space-y-4">
               {/* Model-specific Thinking Levels */}
               <div>
                 <div className="flex items-center justify-between mb-2">
-                  <label className="text-white font-medium flex items-center space-x-1.5">
-                    <BrainCircuit size={15} className="text-omp-purple" />
-                    <span>Düşünme Seviyesi (--thinking):</span>
+                  <label className="text-white font-bold uppercase text-[11px] flex items-center space-x-1.5">
+                    <Rune name="tools-sparkles" size={13} className="text-omp-accent" />
+                    <span>DÜŞÜNME SEVİYESİ (--THINKING):</span>
                   </label>
-                  <span className="text-[11px] px-2 py-0.5 rounded bg-omp-bg text-omp-accent border border-omp-border font-mono">
-                    {selectedModel.includes('gemini') ? 'Gemini 3.8 Flash Uyumlu' : 'Model Seviyeleri'}
+                  <span className="text-[10px] px-1.5 py-0.2 rounded-[2px] bg-omp-bg text-omp-muted border border-omp-border">
+                    {selectedModel.includes('gemini') ? 'Gemini 3.8 Flash' : 'Model Levels'}
                   </span>
                 </div>
 
@@ -208,43 +185,43 @@ export const ParametersDialog: React.FC<ParametersDialogProps> = ({
                       key={lvl.value}
                       type="button"
                       onClick={() => onSelectThinkingLevel(lvl.value)}
-                      className={`p-3 rounded-xl border text-left transition ${
+                      className={`p-3 rounded-[2px] border text-left transition font-mono ${
                         thinkingLevel === lvl.value
-                          ? 'border-omp-accent bg-omp-accent/15 text-white'
-                          : 'border-omp-border bg-omp-bg text-omp-text hover:border-omp-border/80'
+                          ? 'border-omp-accent bg-omp-bg text-white'
+                          : 'border-omp-border bg-omp-bg/60 text-zinc-300 hover:border-zinc-700'
                       }`}
                     >
-                      <div className="flex items-center justify-between font-semibold font-mono text-xs mb-1">
-                        <span>{lvl.label}</span>
-                        {thinkingLevel === lvl.value && <Check size={14} className="text-omp-accent" />}
+                      <div className="flex items-center justify-between font-bold text-xs mb-1">
+                        <span className="uppercase">{lvl.label}</span>
+                        {thinkingLevel === lvl.value && <Rune name="indicators-check" size={13} className="text-omp-accent" />}
                       </div>
-                      <p className="text-[11px] text-omp-muted leading-relaxed">{lvl.description}</p>
+                      <p className="text-[11px] text-omp-muted font-sans leading-relaxed">{lvl.description}</p>
                     </button>
                   ))}
                 </div>
               </div>
 
               {/* Tool Approval Mode */}
-              <div className="pt-4 border-t border-omp-border/60">
-                <label className="block text-white font-medium mb-2">Araç Onay Modu (--approval-mode):</label>
-                <div className="grid grid-cols-3 gap-2.5">
+              <div className="pt-3 border-t border-omp-border">
+                <label className="block text-white font-bold uppercase text-[11px] mb-2">ARAÇ ONAY MODU (--APPROVAL-MODE):</label>
+                <div className="grid grid-cols-3 gap-2">
                   {[
-                    { id: 'write', label: 'write', desc: 'Yazma ve komut işlemlerinde onay sorar (Önerilen)' },
-                    { id: 'always-ask', label: 'always-ask', desc: 'Her araç çağrısında mutlaka kullanıcı onayı bekler' },
-                    { id: 'yolo', label: 'yolo', desc: 'Tüm araçları sormadan doğrudan çalıştırır' },
+                    { id: 'write', label: 'WRITE', desc: 'Yazma ve komut işlemlerinde onay sorar (Önerilen)' },
+                    { id: 'always-ask', label: 'ALWAYS-ASK', desc: 'Her araç çağrısında kullanıcı onayı bekler' },
+                    { id: 'yolo', label: 'YOLO', desc: 'Tüm araçları sormadan doğrudan çalıştırır' },
                   ].map((mode) => (
                     <button
                       key={mode.id}
                       type="button"
                       onClick={() => onSelectApprovalMode(mode.id)}
-                      className={`p-3 rounded-xl border text-left transition ${
+                      className={`p-2.5 rounded-[2px] border text-left transition font-mono ${
                         approvalMode === mode.id
-                          ? 'border-omp-accent bg-omp-accent/15 text-white'
-                          : 'border-omp-border bg-omp-bg text-omp-text hover:border-omp-border/80'
+                          ? 'border-omp-accent bg-omp-bg text-white'
+                          : 'border-omp-border bg-omp-bg/60 text-zinc-300 hover:border-zinc-700'
                       }`}
                     >
-                      <div className="font-semibold font-mono text-xs mb-1">{mode.label}</div>
-                      <p className="text-[11px] text-omp-muted leading-relaxed">{mode.desc}</p>
+                      <div className="font-bold text-xs mb-1">{mode.label}</div>
+                      <p className="text-[10px] text-omp-muted font-sans leading-relaxed">{mode.desc}</p>
                     </button>
                   ))}
                 </div>
@@ -257,11 +234,11 @@ export const ParametersDialog: React.FC<ParametersDialogProps> = ({
                     type="checkbox"
                     checked={autoApprove}
                     onChange={(e) => onToggleAutoApprove(e.target.checked)}
-                    className="w-4 h-4 rounded bg-omp-bg border-omp-border text-omp-accent focus:ring-0"
+                    className="w-4 h-4 rounded-[2px] bg-omp-bg border-omp-border text-omp-accent focus:ring-0"
                   />
                   <div>
-                    <span className="font-medium">Otomatik Onay (--auto-approve)</span>
-                    <p className="text-[11px] text-omp-muted">Tüm araç onay isteklerini otomatik kabul eder</p>
+                    <span className="font-bold uppercase text-[11px]">OTOMATİK ONAY (--AUTO-APPROVE)</span>
+                    <p className="text-[10px] text-omp-muted font-sans">Tüm araç onay isteklerini otomatik kabul eder</p>
                   </div>
                 </label>
               </div>
@@ -269,54 +246,54 @@ export const ParametersDialog: React.FC<ParametersDialogProps> = ({
           )}
 
           {activeTab === 'flags' && (
-            <div className="space-y-4">
-              <label className="flex items-start space-x-3 p-3.5 rounded-xl border border-omp-border bg-omp-bg hover:border-omp-accent/50 cursor-pointer transition">
+            <div className="space-y-3 font-mono">
+              <label className="flex items-start space-x-3 p-3 rounded-[2px] border border-omp-border bg-omp-bg hover:border-omp-accent cursor-pointer transition">
                 <input
                   type="checkbox"
                   checked={goalMode}
                   onChange={(e) => onToggleGoalMode(e.target.checked)}
-                  className="mt-0.5 w-4 h-4 rounded bg-omp-surface border-omp-border text-omp-accent focus:ring-0"
+                  className="mt-0.5 w-4 h-4 rounded-[2px] bg-omp-surface border-omp-border text-omp-accent focus:ring-0"
                 />
                 <div>
-                  <div className="font-medium text-white flex items-center space-x-1.5">
-                    <span>🎯 Hedef Modu (--goal)</span>
+                  <div className="font-bold text-white uppercase text-xs">
+                    HEDEF MODU (--GOAL)
                   </div>
-                  <p className="text-[11px] text-omp-muted mt-0.5 leading-relaxed">
+                  <p className="text-[11px] text-omp-muted mt-0.5 font-sans leading-relaxed">
                     Ajanı taze bir oturumda hedef odaklı başlatır, testler geçene kadar otonom döngü kurar.
                   </p>
                 </div>
               </label>
 
-              <label className="flex items-start space-x-3 p-3.5 rounded-xl border border-omp-border bg-omp-bg hover:border-omp-accent/50 cursor-pointer transition">
+              <label className="flex items-start space-x-3 p-3 rounded-[2px] border border-omp-border bg-omp-bg hover:border-omp-accent cursor-pointer transition">
                 <input
                   type="checkbox"
                   checked={planYolo}
                   onChange={(e) => onTogglePlanYolo(e.target.checked)}
-                  className="mt-0.5 w-4 h-4 rounded bg-omp-surface border-omp-border text-omp-accent focus:ring-0"
+                  className="mt-0.5 w-4 h-4 rounded-[2px] bg-omp-surface border-omp-border text-omp-accent focus:ring-0"
                 />
                 <div>
-                  <div className="font-medium text-white flex items-center space-x-1.5">
-                    <span>📋 Plan YOLO (--plan-yolo)</span>
+                  <div className="font-bold text-white uppercase text-xs">
+                    PLAN YOLO (--PLAN-YOLO)
                   </div>
-                  <p className="text-[11px] text-omp-muted mt-0.5 leading-relaxed">
+                  <p className="text-[11px] text-omp-muted mt-0.5 font-sans leading-relaxed">
                     Başlangıçta mimari planı oluşturur, ilk çözümde planı otomatik onaylayıp doğrudan uygulamaya geçer.
                   </p>
                 </div>
               </label>
 
-              <label className="flex items-start space-x-3 p-3.5 rounded-xl border border-omp-border bg-omp-bg hover:border-omp-accent/50 cursor-pointer transition">
+              <label className="flex items-start space-x-3 p-3 rounded-[2px] border border-omp-border bg-omp-bg hover:border-omp-accent cursor-pointer transition">
                 <input
                   type="checkbox"
                   checked={prewalk}
                   onChange={(e) => onTogglePrewalk(e.target.checked)}
-                  className="mt-0.5 w-4 h-4 rounded bg-omp-surface border-omp-border text-omp-accent focus:ring-0"
+                  className="mt-0.5 w-4 h-4 rounded-[2px] bg-omp-surface border-omp-border text-omp-accent focus:ring-0"
                 />
                 <div>
-                  <div className="font-medium text-white flex items-center space-x-1.5">
-                    <span>⚡ Prewalk (--prewalk)</span>
+                  <div className="font-bold text-white uppercase text-xs">
+                    PREWALK (--PREWALK)
                   </div>
-                  <p className="text-[11px] text-omp-muted mt-0.5 leading-relaxed">
-                    Plan oluşturulduktan sonra ilk kod yazımında otomatik olarak hafif ve ekonomik (smol) modele geçiş yapar.
+                  <p className="text-[11px] text-omp-muted mt-0.5 font-sans leading-relaxed">
+                    Plan oluşturulduktan sonra ilk kod yazımında otomatik olarak hafif modele geçiş yapar.
                   </p>
                 </div>
               </label>
@@ -325,7 +302,7 @@ export const ParametersDialog: React.FC<ParametersDialogProps> = ({
         </div>
 
         {/* Modal Footer */}
-        <div className="px-6 py-3.5 border-t border-omp-border bg-omp-surfaceLight/40 flex items-center justify-between select-none">
+        <div className="px-5 py-2.5 border-t border-omp-border bg-omp-surface flex items-center justify-between select-none">
           <button
             type="button"
             onClick={() => {
@@ -334,25 +311,21 @@ export const ParametersDialog: React.FC<ParametersDialogProps> = ({
               onSelectApprovalMode('write');
               onToggleAutoApprove(false);
               onToggleAdvisor(false);
-              onSelectSmolModel('');
-              onSelectSlowModel('');
-              onSelectPlanModel('');
-              onSelectAdvisorModel('');
               onToggleGoalMode(false);
               onTogglePlanYolo(false);
               onTogglePrewalk(false);
             }}
-            className="text-xs text-omp-muted hover:text-white transition"
+            className="text-[11px] text-omp-muted hover:text-white transition uppercase font-mono"
           >
-            Varsayılanlara Sıfırla
+            VARSAYILANLARA SIFIRLA
           </button>
 
           <button
             type="button"
             onClick={onClose}
-            className="px-5 py-2 rounded-xl bg-omp-accent hover:bg-omp-accentHover text-white font-medium text-xs shadow-lg transition"
+            className="px-4 py-1 rounded-[2px] bg-omp-accent hover:bg-omp-accentHover text-white font-bold font-mono text-xs uppercase tracking-wider transition"
           >
-            Uygula & Kapat
+            UYGULA & KAPAT
           </button>
         </div>
       </div>

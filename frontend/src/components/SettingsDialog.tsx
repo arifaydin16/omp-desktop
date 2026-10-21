@@ -1,27 +1,12 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { 
-  Settings, 
-  Search, 
-  RefreshCw, 
-  Save, 
-  Check, 
-  X, 
-  AlertCircle,
-  Copy,
-  ChevronDown,
-  ChevronUp,
-  Sliders,
-  Terminal,
-  Monitor,
-  Cpu,
-  ShieldCheck,
-  Sparkles
-} from 'lucide-react';
+import { Rune } from './Rune';
 import * as AppApi from '../../wailsjs/go/main/App';
+import { AuthenticationPanel } from './AuthenticationPanel';
 
 export interface SettingsDialogProps {
   isOpen: boolean;
   onClose: () => void;
+  profile?: string;
 }
 
 interface ConfigItem {
@@ -225,10 +210,78 @@ const PRIMARY_SETTINGS: PrimarySettingDef[] = [
     type: 'boolean'
   }
 ];
+interface AuthSettingDef {
+  key: string;
+  label: string;
+  description: string;
+  type: 'string' | 'boolean' | 'secret' | 'array';
+  section: string;
+}
+
+const AUTH_SETTINGS: AuthSettingDef[] = [
+  {
+    key: 'auth.broker.url',
+    label: 'Auth Broker URL',
+    description: 'Kurumsal veya merkezi kimlik doğrulama broker sunucusu adresi.',
+    type: 'string',
+    section: 'Broker & Hesap Yönetimi',
+  },
+  {
+    key: 'auth.broker.token',
+    label: 'Auth Broker Token',
+    description: 'Broker sunucusu ile kimlik doğrulama için kullanılan token anahtarı.',
+    type: 'secret',
+    section: 'Broker & Hesap Yönetimi',
+  },
+  {
+    key: 'auth.accountPolicies',
+    label: 'Hesap Dağıtım Politikaları (Account Policies)',
+    description: 'Hesaplar arası yük dağıtımı ve kota önceliklendirme kuralları (JSON array).',
+    type: 'array',
+    section: 'Broker & Hesap Yönetimi',
+  },
+  {
+    key: 'secrets.enabled',
+    label: 'Gizli Bilgileri Maskele (Secrets Obfuscation)',
+    description: 'Sağlayıcıya giden mesajlardaki şifre, API anahtarı ve hassas token kalıplarını sansürler.',
+    type: 'boolean',
+    section: 'Güvenlik & Gizlilik',
+  },
+  {
+    key: 'share.redactSecrets',
+    label: 'Paylaşımlarda Gizli Bilgileri Maskele',
+    description: 'Oturum linki paylaşıldığında hassas kimlik verilerini otomatik temizler.',
+    type: 'boolean',
+    section: 'Güvenlik & Gizlilik',
+  },
+  {
+    key: 'enabledProviders',
+    label: 'İzin Verilen Sağlayıcılar (Enabled Providers)',
+    description: 'Aktif olarak kullanılabilecek LLM sağlayıcı listesi (boş = tümü).',
+    type: 'array',
+    section: 'Sağlayıcı İzinleri',
+  },
+  {
+    key: 'disabledProviders',
+    label: 'Engellenen Sağlayıcılar (Disabled Providers)',
+    description: 'Kullanımı kısıtlanan veya devre dışı bırakılan LLM sağlayıcı listesi.',
+    type: 'array',
+    section: 'Sağlayıcı İzinleri',
+  },
+  {
+    key: 'provider.appendOnlyContext',
+    label: 'Sağlayıcı Prefix Önbellek Koruması',
+    description: 'DeepSeek, Anthropic gibi önbellekli sağlayıcılarda hit oranını korumak için mesaj günlüğünü append-only tutar.',
+    type: 'boolean',
+    section: 'Sağlayıcı İzinleri',
+  },
+];
+
 
 export const SettingsDialog: React.FC<SettingsDialogProps> = ({
   isOpen,
   onClose,
+  profile,
 }) => {
   const [configMap, setConfigMap] = useState<Record<string, unknown>>({});
   const [allConfigItems, setAllConfigItems] = useState<ConfigItem[]>([]);
@@ -236,12 +289,16 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({
   const [savingKey, setSavingKey] = useState<string | null>(null);
   const [saveStatus, setSaveStatus] = useState<string>('');
   
+  // Tab navigation state: 'general' | 'auth' | 'extra'
+  const [activeTab, setActiveTab] = useState<'general' | 'auth' | 'extra'>('general');
+  const [showBrokerToken, setShowBrokerToken] = useState(false);
+
   // Extra options state
-  const [showExtra, setShowExtra] = useState(false);
   const [extraSearch, setExtraSearch] = useState('');
   const [editingExtraKey, setEditingExtraKey] = useState<string | null>(null);
   const [editExtraValue, setEditExtraValue] = useState<string>('');
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
+  const [currentThemeState, setCurrentThemeState] = useState(() => localStorage.getItem('omp_theme') || 'cyber-violet');
 
   const loadConfig = async () => {
     setLoading(true);
@@ -280,7 +337,7 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({
       setEditingExtraKey(null);
       setSaveStatus('');
     }
-  }, [isOpen]);
+  }, [isOpen, profile]);
 
   // Update a single config setting
   const updateSetting = async (key: string, value: string) => {
@@ -312,13 +369,18 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({
     updateSetting(key, val);
   };
 
-  // Extra options: all items that are NOT excluded and NOT in primary list
-  const primaryKeySet = useMemo(() => new Set(PRIMARY_SETTINGS.map((s) => s.key)), []);
+  // Extra options: all items that are NOT excluded and NOT in primary/auth lists
+  const knownKeySet = useMemo(() => {
+    const set = new Set<string>();
+    PRIMARY_SETTINGS.forEach((s) => set.add(s.key));
+    AUTH_SETTINGS.forEach((s) => set.add(s.key));
+    return set;
+  }, []);
   
   const extraConfigItems = useMemo(() => {
     return allConfigItems.filter((item) => {
       if (isExcludedKey(item.key)) return false;
-      if (primaryKeySet.has(item.key)) return false;
+      if (knownKeySet.has(item.key)) return false;
       if (extraSearch.trim()) {
         const q = extraSearch.toLowerCase();
         return (
@@ -329,7 +391,7 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({
       }
       return true;
     });
-  }, [allConfigItems, primaryKeySet, extraSearch]);
+  }, [allConfigItems, knownKeySet, extraSearch]);
 
   const copyToClipboard = (text: string, id: string) => {
     navigator.clipboard.writeText(text);
@@ -342,282 +404,435 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-fadeIn">
       <div 
-        className="w-full max-w-4xl bg-omp-surface border border-omp-border rounded-2xl shadow-2xl flex flex-col max-h-[88vh] overflow-hidden font-sans animate-scaleIn"
+        className="w-full max-w-5xl bg-omp-surface border border-omp-border rounded-[2px] shadow-2xl flex flex-col h-[85vh] overflow-hidden font-mono text-xs animate-scaleIn"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="px-6 py-4 border-b border-omp-border flex items-center justify-between bg-omp-surfaceLight/40 select-none shrink-0">
+        <div className="px-5 py-3 border-b border-omp-border flex items-center justify-between bg-omp-surface select-none shrink-0 font-mono">
           <div className="flex items-center space-x-3">
-            <div className="w-8 h-8 rounded-lg bg-omp-accent/15 border border-omp-accent/30 flex items-center justify-center text-omp-accent">
-              <Settings size={18} />
+            <div className="w-6 h-6 bg-omp-accent text-white flex items-center justify-center font-bold rounded-[2px]">
+              <Rune name="tools-settings" size={13} />
             </div>
             <div>
               <div className="flex items-center space-x-2">
-                <h3 className="text-base font-semibold text-white">Yapılandırma & Ayarlar</h3>
-                <span className="text-[11px] px-2 py-0.5 rounded-full bg-omp-bg text-omp-accent border border-omp-border font-mono">
-                  omp config
+                <h3 className="text-xs font-bold text-white uppercase tracking-wider">
+                  07 // CONFIGURATION & SYSTEM PREFERENCES
+                </h3>
+                <span className="text-[10px] px-1.5 py-0.2 rounded-[2px] bg-omp-bg text-omp-accent border border-omp-border font-mono">
+                  {profile || 'default'}
                 </span>
               </div>
-              <p className="text-xs text-omp-muted">
-                oh-my-pi sistem, görsel çıktı ve geliştirici parametrelerini yapılandırın
-              </p>
             </div>
           </div>
 
-          <div className="flex items-center space-x-2">
+          <div className="flex items-center space-x-1.5">
             <button
               onClick={loadConfig}
               disabled={loading}
-              className="p-1.5 rounded-lg hover:bg-omp-border text-omp-muted hover:text-white transition"
+              className="p-1 rounded-[2px] bg-omp-bg hover:bg-omp-surfaceLight border border-omp-border text-zinc-300 hover:text-white transition"
               title="Yenile"
             >
-              <RefreshCw size={15} className={loading ? 'animate-spin' : ''} />
+              <Rune name="schedule-refresh-cw" size={13} className={loading ? 'animate-spin' : ''} />
             </button>
             <button
               onClick={onClose}
-              className="p-1.5 rounded-lg hover:bg-omp-border text-omp-muted hover:text-white transition"
+              className="p-1 rounded-[2px] bg-omp-bg hover:bg-omp-error/20 border border-omp-border text-zinc-400 hover:text-omp-error transition"
               title="Kapat"
             >
-              <X size={18} />
+              <Rune name="indicators-x" size={14} />
             </button>
           </div>
         </div>
 
         {/* Status Toast Banner */}
         {saveStatus && (
-          <div className="px-6 py-2 bg-omp-accent/15 border-b border-omp-accent/30 text-xs text-omp-accent flex justify-between items-center shrink-0">
+          <div className="px-5 py-2 bg-omp-accent/15 border-b border-omp-accent/30 text-xs text-white font-mono flex justify-between items-center shrink-0">
             <div className="flex items-center space-x-2">
-              <Check size={14} />
+              <Rune name="indicators-check" size={12} className="text-omp-success" />
               <span>{saveStatus}</span>
             </div>
-            <button onClick={() => setSaveStatus('')} className="text-omp-muted hover:text-white font-bold">
-              <X size={12} />
+            <button onClick={() => setSaveStatus('')} className="text-zinc-400 hover:text-white font-bold">
+              ✕
             </button>
           </div>
         )}
 
-        {/* Main Content Body */}
-        <div className="flex-1 overflow-y-auto p-6 space-y-6">
-          
-          {/* SECTION 1: Sistem & Ajan Deneyimi */}
-          <div className="space-y-3">
-            <div className="flex items-center space-x-2 text-white font-medium text-xs select-none border-b border-omp-border/60 pb-2">
-              <ShieldCheck size={15} className="text-omp-accent" />
-              <span>Sistem ve Ajan Deneyimi</span>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              {PRIMARY_SETTINGS.filter((s) => s.category === 'system').map((item) => {
-                const currentVal = Boolean(configMap[item.key]);
-                const isSaving = savingKey === item.key;
-
-                return (
-                  <div
-                    key={item.key}
-                    className="p-3 rounded-xl bg-omp-bg border border-omp-border/70 hover:border-omp-muted/70 transition flex items-start justify-between gap-3"
-                  >
-                    <div className="flex-1 min-w-0">
-                      <div className="text-xs font-medium text-white mb-0.5">
-                        {item.label}
-                      </div>
-                      <p className="text-[11px] text-omp-muted leading-relaxed">
-                        {item.description}
-                      </p>
-                    </div>
-
-                    <button
-                      type="button"
-                      disabled={isSaving}
-                      onClick={() => handleToggle(item.key)}
-                      className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
-                        currentVal ? 'bg-omp-accent' : 'bg-omp-surfaceLight'
-                      }`}
-                    >
-                      <span
-                        className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
-                          currentVal ? 'translate-x-5' : 'translate-x-0'
-                        }`}
-                      />
-                    </button>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* SECTION 2: Görünüm & Arayüz */}
-          <div className="space-y-3">
-            <div className="flex items-center space-x-2 text-white font-medium text-xs select-none border-b border-omp-border/60 pb-2">
-              <Monitor size={15} className="text-omp-accent" />
-              <span>Arayüz ve Görünüm Tercihleri</span>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              {PRIMARY_SETTINGS.filter((s) => s.category === 'display').map((item) => {
-                const currentVal = Boolean(configMap[item.key]);
-                const isSaving = savingKey === item.key;
-
-                return (
-                  <div
-                    key={item.key}
-                    className="p-3 rounded-xl bg-omp-bg border border-omp-border/70 hover:border-omp-muted/70 transition flex items-start justify-between gap-3"
-                  >
-                    <div className="flex-1 min-w-0">
-                      <div className="text-xs font-medium text-white mb-0.5">
-                        {item.label}
-                      </div>
-                      <p className="text-[11px] text-omp-muted leading-relaxed">
-                        {item.description}
-                      </p>
-                    </div>
-
-                    <button
-                      type="button"
-                      disabled={isSaving}
-                      onClick={() => handleToggle(item.key)}
-                      className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
-                        currentVal ? 'bg-omp-accent' : 'bg-omp-surfaceLight'
-                      }`}
-                    >
-                      <span
-                        className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
-                          currentVal ? 'translate-x-5' : 'translate-x-0'
-                        }`}
-                      />
-                    </button>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* SECTION 3: Geliştirici & Yürütme Parametreleri */}
-          <div className="space-y-3">
-            <div className="flex items-center space-x-2 text-white font-medium text-xs select-none border-b border-omp-border/60 pb-2">
-              <Terminal size={15} className="text-omp-accent" />
-              <span>Geliştirici ve Alt Ajan Parametreleri</span>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              {PRIMARY_SETTINGS.filter((s) => s.category === 'dev').map((item) => {
-                const rawVal = configMap[item.key];
-                const isSaving = savingKey === item.key;
-
-                if (item.type === 'boolean') {
-                  const currentVal = Boolean(rawVal);
-                  return (
-                    <div
-                      key={item.key}
-                      className="p-3 rounded-xl bg-omp-bg border border-omp-border/70 hover:border-omp-muted/70 transition flex items-start justify-between gap-3"
-                    >
-                      <div className="flex-1 min-w-0">
-                        <div className="text-xs font-medium text-white mb-0.5">{item.label}</div>
-                        <p className="text-[11px] text-omp-muted leading-relaxed">{item.description}</p>
-                      </div>
-                      <button
-                        type="button"
-                        disabled={isSaving}
-                        onClick={() => handleToggle(item.key)}
-                        className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
-                          currentVal ? 'bg-omp-accent' : 'bg-omp-surfaceLight'
-                        }`}
-                      >
-                        <span
-                          className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
-                            currentVal ? 'translate-x-5' : 'translate-x-0'
-                          }`}
-                        />
-                      </button>
-                    </div>
-                  );
-                }
-
-                return (
-                  <div
-                    key={item.key}
-                    className="p-3 rounded-xl bg-omp-bg border border-omp-border/70 hover:border-omp-muted/70 transition flex flex-col justify-between space-y-2"
-                  >
-                    <div>
-                      <div className="text-xs font-medium text-white mb-0.5">{item.label}</div>
-                      <p className="text-[11px] text-omp-muted leading-relaxed">{item.description}</p>
-                    </div>
-                    <div className="pt-1">
-                      <input
-                        type={item.type === 'number' ? 'number' : 'text'}
-                        defaultValue={rawVal !== undefined ? String(rawVal) : ''}
-                        onBlur={(e) => {
-                          if (e.target.value !== String(rawVal ?? '')) {
-                            handleTextChange(item.key, e.target.value);
-                          }
-                        }}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') {
-                            e.currentTarget.blur();
-                          }
-                        }}
-                        placeholder="Değer girin..."
-                        className="w-full bg-omp-surface border border-omp-border rounded-lg px-3 py-1.5 text-xs text-white font-mono focus:outline-none focus:border-omp-accent transition"
-                      />
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* SECTION 4: Ek Seçenekler (Gelişmiş Yapılandırma) */}
-          <div className="border border-omp-border rounded-xl bg-omp-bg/80 overflow-hidden">
-            <button
-              type="button"
-              onClick={() => setShowExtra(!showExtra)}
-              className="w-full px-4 py-3 bg-omp-surfaceLight/30 hover:bg-omp-surfaceLight/50 flex items-center justify-between text-xs select-none transition"
-            >
-              <div className="flex items-center space-x-2">
-                <Sliders size={15} className="text-omp-accent" />
-                <span className="font-semibold text-white">Ek Seçenekler (Gelişmiş Yapılandırma)</span>
-                <span className="text-[10px] px-2 py-0.5 rounded-full bg-omp-surface text-omp-muted border border-omp-border font-mono">
-                  {extraConfigItems.length} ek ayar
+        {/* Main Body: Left Sidebar + Right Content View */}
+        <div className="flex-1 flex overflow-hidden font-mono text-xs">
+          {/* Left Sidebar */}
+          <div className="w-56 shrink-0 bg-omp-surface border-r border-omp-border flex flex-col justify-between p-3 select-none">
+            <div className="space-y-1">
+              <div className="px-2 py-1 text-[10px] uppercase font-mono font-bold text-omp-muted tracking-wider">
+                NAVIGATION //
+              </div>
+              <button
+                type="button"
+                onClick={() => setActiveTab('general')}
+                className={`w-full flex items-center justify-between px-3 py-2 rounded-[2px] text-xs transition text-left ${
+                  activeTab === 'general'
+                    ? 'bg-omp-accent text-white font-bold'
+                    : 'text-zinc-300 hover:bg-omp-bg hover:text-white'
+                }`}
+              >
+                <div className="flex items-center space-x-2">
+                  <Rune name="metrics-sliders-horizontal" size={13} className={activeTab === 'general' ? 'text-white' : 'text-omp-accent'} />
+                  <span>01 // GENEL</span>
+                </div>
+                <span className={`text-[10px] px-1 py-0.2 rounded-[2px] font-mono tabular-nums ${
+                  activeTab === 'general' ? 'bg-white/20 text-white' : 'bg-omp-bg text-omp-muted'
+                }`}>
+                  {PRIMARY_SETTINGS.length}
                 </span>
-              </div>
-              <div className="flex items-center space-x-1.5 text-omp-muted">
-                <span className="text-[11px]">{showExtra ? 'Gizle' : 'Genişlet & İncele'}</span>
-                {showExtra ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
-              </div>
-            </button>
+              </button>
 
-            {showExtra && (
-              <div className="p-4 border-t border-omp-border space-y-3 bg-[#0a0d12]">
+              <button
+                type="button"
+                onClick={() => setActiveTab('auth')}
+                className={`w-full flex items-center justify-between px-3 py-2 rounded-[2px] text-xs transition text-left ${
+                  activeTab === 'auth'
+                    ? 'bg-omp-accent text-white font-bold'
+                    : 'text-zinc-300 hover:bg-omp-bg hover:text-white'
+                }`}
+              >
+                <div className="flex items-center space-x-2">
+                  <Rune name="identity-lock" size={13} className={activeTab === 'auth' ? 'text-white' : 'text-omp-accent'} />
+                  <span>02 // AUTH</span>
+                </div>
+                <span className={`text-[10px] px-1 py-0.2 rounded-[2px] font-mono ${
+                  activeTab === 'auth' ? 'bg-white/20 text-white' : 'bg-omp-bg text-omp-muted'
+                }`}>
+                  /login
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setActiveTab('extra')}
+                className={`w-full flex items-center justify-between px-3 py-2 rounded-[2px] text-xs transition text-left ${
+                  activeTab === 'extra'
+                    ? 'bg-omp-accent text-white font-bold'
+                    : 'text-zinc-300 hover:bg-omp-bg hover:text-white'
+                }`}
+              >
+                <div className="flex items-center space-x-2">
+                  <Rune name="code-terminal" size={13} className={activeTab === 'extra' ? 'text-white' : 'text-omp-accent'} />
+                  <span>03 // ADVANCED</span>
+                </div>
+                <span className={`text-[10px] px-1 py-0.2 rounded-[2px] font-mono tabular-nums ${
+                  activeTab === 'extra' ? 'bg-white/20 text-white' : 'bg-omp-bg text-omp-muted'
+                }`}>
+                  {extraConfigItems.length}
+                </span>
+              </button>
+            </div>
+
+            {/* Bottom active profile info */}
+            <div className="p-2.5 rounded-[2px] bg-omp-bg border border-omp-border text-[10px] font-mono space-y-1">
+              <div className="flex items-center justify-between">
+                <span className="text-omp-muted">PROFIL:</span>
+                <span className="text-omp-accent font-bold">{profile || 'default'}</span>
+              </div>
+              <div className="flex items-center justify-between text-zinc-400">
+                <span>AYARLAR:</span>
+                <span className="tabular-nums">{allConfigItems.length} param</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Right Content Body */}
+          <div className="flex-1 overflow-y-auto p-6 space-y-6">
+            {/* TAB 1: Genel Ayarlar */}
+            {activeTab === 'general' && (
+              <div className="space-y-6 animate-fadeIn">
+                {/* SECTION 1: Sistem & Ajan Deneyimi */}
+                <div className="space-y-3">
+                  <div className="flex items-center space-x-2 text-white font-bold text-xs select-none border-b border-omp-border pb-1.5 uppercase tracking-wider font-mono">
+                    <Rune name="identity-shield-check" size={13} className="text-omp-accent" />
+                    <span>01 // SİSTEM & AJAN DENEYİMİ</span>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    {PRIMARY_SETTINGS.filter((s) => s.category === 'system').map((item) => {
+                      const currentVal = Boolean(configMap[item.key]);
+                      const isSaving = savingKey === item.key;
+
+                      return (
+                        <div
+                          key={item.key}
+                          className="p-3 rounded-xl bg-omp-bg border border-omp-border/70 hover:border-omp-muted/70 transition flex items-start justify-between gap-3"
+                        >
+                          <div className="flex-1 min-w-0">
+                            <div className="text-xs font-medium text-white mb-0.5">
+                              {item.label}
+                            </div>
+                            <p className="text-[11px] text-omp-muted leading-relaxed">
+                              {item.description}
+                            </p>
+                          </div>
+
+                          <button
+                            type="button"
+                            disabled={isSaving}
+                            onClick={() => handleToggle(item.key)}
+                            className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                              currentVal ? 'bg-omp-accent' : 'bg-omp-surfaceLight'
+                            }`}
+                          >
+                            <span
+                              className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                                currentVal ? 'translate-x-5' : 'translate-x-0'
+                              }`}
+                            />
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* SECTION 2: Görünüm & Arayüz */}
+                <div className="space-y-3">
+                  <div className="flex items-center space-x-2 text-white font-bold text-xs select-none border-b border-omp-border pb-1.5 uppercase tracking-wider font-mono">
+                    <Rune name="code-terminal" size={13} className="text-omp-accent" />
+                    <span>02 // ARAYÜZ VE GÖRÜNÜM TERCİHLERİ</span>
+                  </div>
+                  {/* Theme Switcher Cards */}
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                    {[
+                      {
+                        id: 'cyber-violet',
+                        name: 'Pi Gradient (Varsayılan)',
+                        badge: 'VARSAYILAN',
+                        desc: 'Mat siyah zemin & #E84AC3 / #6EADEE neon gradient',
+                        accent: '#E84AC3',
+                        bg: '#09090b',
+                        gradient: 'linear-gradient(135deg, #E84AC3, #6EADEE)',
+                      },
+                      {
+                        id: 'swiss-dark',
+                        name: 'Swiss Dark',
+                        badge: 'KLASİK',
+                        desc: 'Mat teknik siyah & İsviçre kırmızısı akcent',
+                        accent: '#e30613',
+                        bg: '#09090b',
+                        gradient: '#e30613',
+                      },
+                      {
+                        id: 'swiss-light',
+                        name: 'Swiss Light',
+                        badge: 'AYDINLIK',
+                        desc: 'Temiz beyaz canvas & Kraliyet moru akcent',
+                        accent: '#7c3aed',
+                        bg: '#ffffff',
+                        gradient: '#7c3aed',
+                      },
+                    ].map((th) => {
+                      const isSelected = currentThemeState === th.id;
+                      return (
+                        <button
+                          key={th.id}
+                          type="button"
+                          onClick={() => {
+                            document.documentElement.setAttribute('data-theme', th.id);
+                            localStorage.setItem('omp_theme', th.id);
+                            setCurrentThemeState(th.id);
+                          }}
+                          className={`p-3 rounded-[2px] border text-left transition flex flex-col justify-between space-y-2 ${
+                            isSelected
+                              ? 'border-omp-accent bg-omp-surfaceLight/80 shadow-sm ring-1 ring-omp-accent'
+                              : 'border-omp-border bg-omp-bg hover:bg-omp-surfaceLight hover:border-omp-borderLight'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between">
+                            <span className="font-bold text-xs text-white font-mono">{th.name}</span>
+                            <span className="text-[9px] px-1 py-0.2 rounded-[2px] bg-omp-bg border border-omp-border text-omp-muted font-mono font-bold">
+                              {th.badge}
+                            </span>
+                          </div>
+                          <div className="flex items-center space-x-2">
+                            <div
+                              className="w-5 h-5 rounded-[2px] border border-omp-border flex items-center justify-center shrink-0"
+                              style={{ backgroundColor: th.bg }}
+                            >
+                              <div className="w-2.5 h-2.5 rounded-full" style={{ background: th.gradient || th.accent }} />
+                            </div>
+                            <span className="text-[10px] text-omp-muted font-sans leading-tight">
+                              {th.desc}
+                            </span>
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    {PRIMARY_SETTINGS.filter((s) => s.category === 'display').map((item) => {
+                      const currentVal = Boolean(configMap[item.key]);
+                      const isSaving = savingKey === item.key;
+
+                      return (
+                        <div
+                          key={item.key}
+                          className="p-3 rounded-xl bg-omp-bg border border-omp-border/70 hover:border-omp-muted/70 transition flex items-start justify-between gap-3"
+                        >
+                          <div className="flex-1 min-w-0">
+                            <div className="text-xs font-medium text-white mb-0.5">
+                              {item.label}
+                            </div>
+                            <p className="text-[11px] text-omp-muted leading-relaxed">
+                              {item.description}
+                            </p>
+                          </div>
+
+                          <button
+                            type="button"
+                            disabled={isSaving}
+                            onClick={() => handleToggle(item.key)}
+                            className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                              currentVal ? 'bg-omp-accent' : 'bg-omp-surfaceLight'
+                            }`}
+                          >
+                            <span
+                              className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                                currentVal ? 'translate-x-5' : 'translate-x-0'
+                              }`}
+                            />
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* SECTION 3: Geliştirici & Yürütme Parametreleri */}
+                <div className="space-y-3">
+                  <div className="flex items-center space-x-2 text-white font-bold text-xs select-none border-b border-omp-border pb-1.5 uppercase tracking-wider font-mono">
+                    <Rune name="code-server" size={13} className="text-omp-accent" />
+                    <span>03 // GELİŞTİRİCİ VE ALT AJAN PARAMETRELERİ</span>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    {PRIMARY_SETTINGS.filter((s) => s.category === 'dev').map((item) => {
+                      const rawVal = configMap[item.key];
+                      const isSaving = savingKey === item.key;
+
+                      if (item.type === 'boolean') {
+                        const currentVal = Boolean(rawVal);
+                        return (
+                          <div
+                            key={item.key}
+                            className="p-3 rounded-xl bg-omp-bg border border-omp-border/70 hover:border-omp-muted/70 transition flex items-start justify-between gap-3"
+                          >
+                            <div className="flex-1 min-w-0">
+                              <div className="text-xs font-medium text-white mb-0.5">{item.label}</div>
+                              <p className="text-[11px] text-omp-muted leading-relaxed">{item.description}</p>
+                            </div>
+                            <button
+                              type="button"
+                              disabled={isSaving}
+                              onClick={() => handleToggle(item.key)}
+                              className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                                currentVal ? 'bg-omp-accent' : 'bg-omp-surfaceLight'
+                              }`}
+                            >
+                              <span
+                                className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                                  currentVal ? 'translate-x-5' : 'translate-x-0'
+                                }`}
+                              />
+                            </button>
+                          </div>
+                        );
+                      }
+
+                      return (
+                        <div
+                          key={item.key}
+                          className="p-3 rounded-xl bg-omp-bg border border-omp-border/70 hover:border-omp-muted/70 transition flex flex-col justify-between space-y-2"
+                        >
+                          <div>
+                            <div className="text-xs font-medium text-white mb-0.5">{item.label}</div>
+                            <p className="text-[11px] text-omp-muted leading-relaxed">{item.description}</p>
+                          </div>
+                          <div className="pt-1">
+                            <input
+                              type={item.type === 'number' ? 'number' : 'text'}
+                              defaultValue={rawVal !== undefined ? String(rawVal) : ''}
+                              onBlur={(e) => {
+                                if (e.target.value !== String(rawVal ?? '')) {
+                                  handleTextChange(item.key, e.target.value);
+                                }
+                              }}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') {
+                                  e.currentTarget.blur();
+                                }
+                              }}
+                              placeholder="Değer girin..."
+                              className="w-full bg-omp-surface border border-omp-border rounded-lg px-3 py-1.5 text-xs text-white font-mono focus:outline-none focus:border-omp-accent transition"
+                            />
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* TAB 2: Authentication */}
+            {/* TAB 2: Authentication (/login & Model Sağlayıcıları) */}
+            {activeTab === 'auth' && (
+              <AuthenticationPanel
+                profile={profile}
+                configMap={configMap}
+                onToggle={handleToggle}
+                onTextChange={handleTextChange}
+                savingKey={savingKey}
+              />
+            )}
+
+            {/* TAB 3: Ek Ayarlar (Tüm Gelişmiş Parametreler) */}
+            {activeTab === 'extra' && (
+              <div className="space-y-4 animate-fadeIn">
                 {/* Search in Extra Options */}
                 <div className="relative">
-                  <Search size={14} className="absolute left-3 top-2.5 text-omp-muted" />
+                  <Rune name="tools-search" size={13} className="absolute left-2.5 top-2.5 text-omp-muted" />
                   <input
                     type="text"
                     value={extraSearch}
                     onChange={(e) => setExtraSearch(e.target.value)}
-                    placeholder="Ek seçeneklerde anahtar veya açıklama ara..."
-                    className="w-full bg-omp-surface border border-omp-border rounded-xl pl-9 pr-8 py-1.5 text-xs text-white placeholder-omp-muted focus:outline-none focus:border-omp-accent font-mono transition"
+                    placeholder="Tüm ek seçeneklerde anahtar veya açıklama ara (örn: tui, timeout, git, bash)..."
+                    className="w-full bg-omp-surface border border-omp-border rounded-xl pl-9 pr-8 py-2 text-xs text-white placeholder-omp-muted focus:outline-none focus:border-omp-accent font-mono transition"
+                    autoFocus
                   />
                   {extraSearch && (
                     <button 
                       onClick={() => setExtraSearch('')}
                       className="absolute right-2.5 top-2.5 text-omp-muted hover:text-white"
                     >
-                      <X size={12} />
+                      <Rune name="indicators-x" size={12} />
                     </button>
                   )}
                 </div>
 
+                <div className="flex items-center justify-between text-xs text-omp-muted px-1 select-none">
+                  <span>Listelenen Ayarlar: <strong className="text-white font-mono">{extraConfigItems.length}</strong></span>
+                  {extraSearch && <span>Filtre uygulandı</span>}
+                </div>
+
                 {/* Extra Options List */}
-                <div className="space-y-2 max-h-72 overflow-y-auto divide-y divide-omp-border/30">
+                <div className="space-y-2.5">
                   {extraConfigItems.length === 0 ? (
-                    <div className="p-6 text-center text-xs text-omp-muted">
+                    <div className="p-8 text-center text-xs text-omp-muted bg-omp-bg/50 rounded-xl border border-omp-border/60">
                       {extraSearch ? 'Aramaya uygun ek seçenek bulunamadı.' : 'Ek ayar bulunamadı.'}
                     </div>
                   ) : (
                     extraConfigItems.map((item) => (
                       <div
                         key={item.key}
-                        className="pt-2.5 first:pt-0 p-3 rounded-xl bg-omp-surface/40 border border-omp-border/50 hover:border-omp-muted/60 transition space-y-1.5"
+                        className="p-3.5 rounded-xl bg-omp-bg border border-omp-border/70 hover:border-omp-muted/70 transition space-y-2"
                       >
                         <div className="flex items-start justify-between gap-2">
                           <div className="flex items-center space-x-2 min-w-0">
@@ -630,12 +845,12 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({
                               className="text-omp-muted hover:text-white transition"
                             >
                               {copiedKey === item.key ? (
-                                <Check size={11} className="text-emerald-400" />
+                                <Rune name="indicators-check" size={11} className="text-omp-success" />
                               ) : (
-                                <Copy size={11} />
+                                <Rune name="code-copy" size={11} />
                               )}
                             </button>
-                            <span className="text-[10px] px-1.5 py-0.2 rounded bg-omp-surfaceLight text-omp-muted font-mono">
+                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-omp-surfaceLight text-omp-muted font-mono">
                               {item.type}
                             </span>
                           </div>
@@ -669,7 +884,7 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({
                               type="text"
                               value={editExtraValue}
                               onChange={(e) => setEditExtraValue(e.target.value)}
-                              className="flex-1 bg-omp-bg border border-omp-border rounded-lg px-2.5 py-1 text-xs text-white focus:outline-none focus:border-omp-accent font-mono transition"
+                              className="flex-1 bg-omp-surface border border-omp-border rounded-lg px-2.5 py-1 text-xs text-white focus:outline-none focus:border-omp-accent font-mono transition"
                               autoFocus
                             />
                             <button
@@ -678,13 +893,12 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({
                                 setEditingExtraKey(null);
                                 loadConfig();
                               }}
-                              className="flex items-center space-x-1 px-3 py-1 rounded-lg bg-omp-accent hover:bg-omp-accentHover text-xs text-white font-medium shadow transition"
+                              className="flex items-center space-x-1 px-3 py-1 rounded-[2px] bg-omp-accent hover:bg-omp-accentHover text-xs text-white font-bold uppercase transition"
                             >
-                              <Save size={12} />
-                              <span>Kaydet</span>
+                              <Rune name="indicators-check" size={12} />
+                              <span>KAYDET</span>
                             </button>
                             <button
-                              onClick={() => setEditingExtraKey(null)}
                               className="px-2 py-1 rounded-lg border border-omp-border hover:bg-omp-border text-xs text-omp-muted hover:text-white transition"
                             >
                               İptal
@@ -692,7 +906,7 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({
                           </div>
                         ) : (
                           <div className="pt-0.5">
-                            <span className="font-mono text-xs text-omp-accent bg-omp-bg/80 px-2 py-0.5 rounded border border-omp-border/60 select-all inline-block max-w-full truncate">
+                            <span className="font-mono text-xs text-omp-accent bg-omp-surfaceLight/60 px-2 py-0.5 rounded border border-omp-border/60 select-all inline-block max-w-full truncate">
                               {typeof item.value === 'object'
                                 ? JSON.stringify(item.value)
                                 : String(item.value ?? 'boş')}
@@ -706,9 +920,7 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({
               </div>
             )}
           </div>
-
         </div>
-
         {/* Footer */}
         <div className="px-6 py-3 border-t border-omp-border bg-omp-surfaceLight/30 flex items-center justify-between text-xs text-omp-muted select-none shrink-0">
           <span>Değişiklikler anında uygulanır ve <code className="text-omp-accent font-mono">~/.omp/config.json</code> dosyasına kaydedilir.</span>

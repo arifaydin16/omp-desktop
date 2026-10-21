@@ -2,16 +2,127 @@
 @tailwind components;
 @tailwind utilities;
 
+:root,
+[data-theme="pi-gradient"],
+[data-theme="cyber-violet"] {
+  /* 1. PI GRADIENT (DEFAULT - Swiss Dark matte canvas + #E84AC3 to #6EADEE Neon Gradient) */
+  --omp-bg: 9, 9, 11;               /* #09090b - Pure matte technical black (no purple tint) */
+  --omp-surface: 18, 18, 21;        /* #121215 - Architectural neutral dark surface */
+  --omp-surface-light: 24, 24, 28;  /* #18181c - Elevated cell / hover */
+  --omp-surface-elevated: 32, 32, 37;/* #202025 - High elevation popovers & dialogs */
+  --omp-border: 39, 39, 42;         /* #27272a - Crisp 1px zinc-800 border */
+  --omp-border-light: 63, 63, 70;   /* #3f3f46 - Zinc-700 active grid line */
+  --omp-accent: 232, 74, 195;       /* #E84AC3 - Electric Neon Magenta / Pink */
+  --omp-accent-hover: 110, 173, 238;/* #6EADEE - Sky Blue / Cornflower */
+  --omp-text: 244, 244, 245;        /* #f4f4f5 - High contrast pure white */
+  --omp-muted: 161, 161, 170;       /* #a1a1aa - Crisp secondary zinc-400 */
+  --omp-subtle: 113, 113, 122;      /* #71717a - Micro-metadata zinc-500 */
+  --omp-success: 16, 185, 129;
+  --omp-warning: 245, 158, 11;
+  --omp-error: 239, 68, 68;
+  --omp-info: 110, 173, 238;        /* #6EADEE */
+  --omp-cyan: 110, 173, 238;        /* #6EADEE */
+  --omp-purple: 232, 74, 195;       /* #E84AC3 */
+  --caret-color: #E84AC3;
+  --selection-bg: #E84AC3;
+  --omp-grad-from: #E84AC3;
+  --omp-grad-to: #6EADEE;
+}
+
+/* Signature Pi Gradient Utilities: #E84AC3 to #6EADEE */
+.bg-omp-gradient {
+  background: linear-gradient(135deg, #E84AC3 0%, #6EADEE 100%) !important;
+}
+
+.text-omp-gradient {
+  background: linear-gradient(135deg, #E84AC3 0%, #6EADEE 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.border-omp-gradient {
+  border-image: linear-gradient(135deg, #E84AC3, #6EADEE) 1;
+}
+
+[data-theme="swiss-dark"] {
+  /* 2. SWISS DARK (PREVIOUS THEME - Matte Technical Black & Swiss Red) */
+  --omp-bg: 9, 9, 11;               /* #09090b */
+  --omp-surface: 18, 18, 21;        /* #121215 */
+  --omp-surface-light: 24, 24, 28;  /* #18181c */
+  --omp-surface-elevated: 32, 32, 37;/* #202025 */
+  --omp-border: 39, 39, 42;         /* #27272a */
+  --omp-border-light: 63, 63, 70;   /* #3f3f46 */
+  --omp-accent: 227, 6, 19;         /* #e30613 - Iconic Swiss Red */
+  --omp-accent-hover: 196, 5, 16;   /* #c40510 */
+  --omp-text: 244, 244, 245;        /* #f4f4f5 */
+  --omp-muted: 161, 161, 170;       /* #a1a1aa */
+  --omp-subtle: 113, 113, 122;      /* #71717a */
+  --omp-success: 16, 185, 129;
+  --omp-warning: 245, 158, 11;
+  --omp-error: 239, 68, 68;
+  --omp-info: 37, 99, 235;
+  --omp-cyan: 6, 182, 212;
+  --omp-purple: 168, 85, 247;
+  --caret-color: #e30613;
+  --selection-bg: #e30613;
+}
+
+[data-theme="swiss-light"] {
+  /* 3. SWISS LIGHT (CLEAN WHITE / SLATE THEME) */
+  --omp-bg: 244, 244, 248;          /* #f4f4f8 - Clean slate light canvas */
+  --omp-surface: 255, 255, 255;     /* #ffffff - Pure white surface */
+  --omp-surface-light: 241, 245, 249;/* #f1f5f9 - Elevated soft slate */
+  --omp-surface-elevated: 255, 255, 255;
+  --omp-border: 226, 232, 240;      /* #e2e8f0 - Crisp 1px zinc/slate border */
+  --omp-border-light: 203, 213, 225;/* #cbd5e1 */
+  --omp-accent: 124, 58, 237;       /* #7c3aed - Royal Violet */
+  --omp-accent-hover: 109, 40, 217; /* #6d28d9 */
+  --omp-text: 15, 23, 42;           /* #0f172a - Slate 900 text */
+  --omp-muted: 100, 116, 139;       /* #64748b - Slate 500 */
+  --omp-subtle: 148, 163, 184;      /* #94a3b8 - Slate 400 */
+  --omp-success: 5, 150, 105;
+  --omp-warning: 217, 119, 6;
+  --omp-error: 220, 38, 38;
+  --omp-info: 37, 99, 235;
+  --omp-cyan: 8, 145, 178;
+  --omp-purple: 124, 58, 237;
+  --caret-color: #7c3aed;
+  --selection-bg: #ddd6fe;
+}
+
 @layer base {
+  * {
+    box-sizing: border-box;
+  }
+
   body {
     @apply bg-omp-bg text-omp-text antialiased select-none overflow-hidden m-0 p-0 font-sans;
+    font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11', 'ss01', 'tnum';
+    caret-color: var(--caret-color, #a855f7);
+  }
+
+  ::selection {
+    background-color: var(--selection-bg, #9333ea);
+    color: #ffffff;
+  }
+
+  /* Universal code and tabular numerals */
+  code, kbd, samp, pre {
+    font-family: theme('fontFamily.mono');
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Universal spellcheck disable to prevent red wavy underlines */
+  [contenteditable], input, textarea {
+    spellcheck: false;
+    -webkit-spellcheck: false;
   }
 }
 
-/* Custom scrollbars */
+/* Swiss Design Precision Hairline Scrollbars */
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 4px;
+  height: 4px;
 }
 
 ::-webkit-scrollbar-track {
@@ -19,10 +130,37 @@
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #30363d;
-  border-radius: 3px;
+  background: rgba(var(--omp-border), 0.8);
+  border-radius: 0px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #484f58;
+  background: rgba(var(--omp-border-light), 0.9);
+}
+
+/* Swiss Grid Utilities */
+.swiss-grid {
+  display: grid;
+  gap: 1px;
+  background-color: #27272a;
+}
+
+.swiss-grid > * {
+  background-color: #121215;
+}
+
+.swiss-hairline-b {
+  border-bottom: 1px solid #27272a;
+}
+
+.swiss-hairline-t {
+  border-top: 1px solid #27272a;
+}
+
+.swiss-hairline-r {
+  border-right: 1px solid #27272a;
+}
+
+.swiss-hairline-l {
+  border-left: 1px solid #27272a;
 }

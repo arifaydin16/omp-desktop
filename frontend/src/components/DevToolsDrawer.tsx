@@ -1,18 +1,5 @@
 import React, { useState } from 'react';
-import { 
-  Terminal, 
-  GitCommit, 
-  GitBranch, 
-  Activity, 
-  Sparkles, 
-  Wrench, 
-  Search, 
-  Download, 
-  Calculator, 
-  X, 
-  RefreshCw,
-  Play
-} from 'lucide-react';
+import { Rune } from './Rune';
 import * as AppApi from '../../wailsjs/go/main/App';
 
 interface DevToolsDrawerProps {
@@ -81,9 +68,9 @@ export const DevToolsDrawer: React.FC<DevToolsDrawerProps> = ({
     setStatusText('Arka plan süreçleri taranıyor...');
     try {
       const res = await AppApi.GetProcesses();
-      setOutput(res || 'Çalışan daemon süreci yok.');
+      setOutput(res || 'Aktif çalışan omp daemon süreci bulunmuyor.');
     } catch (err: unknown) {
-      setOutput('Süreç hatası: ' + String(err));
+      setOutput('Süreç listesi hatası: ' + String(err));
     } finally {
       setLoading(false);
     }
@@ -91,7 +78,7 @@ export const DevToolsDrawer: React.FC<DevToolsDrawerProps> = ({
 
   const handleRunCleanse = async () => {
     setLoading(true);
-    setStatusText('omp cleanse çalıştırılıyor (proje tanılaması)...');
+    setStatusText('omp cleanse başlatılıyor...');
     try {
       const res = await AppApi.RunCleanse(cwd);
       setOutput(res || 'Cleanse tamamlandı.');
@@ -116,19 +103,6 @@ export const DevToolsDrawer: React.FC<DevToolsDrawerProps> = ({
     }
   };
 
-  const handleInstallSkill = async (name: string) => {
-    setLoading(true);
-    setStatusText(`'${name}' becerisi kuruluyor...`);
-    try {
-      await AppApi.InstallSkill(name);
-      setOutput(`'${name}' becerisi başarıyla kuruldu.`);
-    } catch (err: unknown) {
-      setOutput('Kurulum hatası: ' + String(err));
-    } finally {
-      setLoading(false);
-    }
-  };
-
   const handleCountTokens = async () => {
     if (!tokenInput.trim()) return;
     setLoading(true);
@@ -144,37 +118,39 @@ export const DevToolsDrawer: React.FC<DevToolsDrawerProps> = ({
   };
 
   return (
-    <div className="fixed inset-y-0 right-0 z-40 w-[540px] bg-omp-surface border-l border-omp-border shadow-2xl flex flex-col">
+    <div className="fixed inset-y-0 right-0 z-40 w-[540px] bg-omp-surface border-l border-omp-border shadow-2xl flex flex-col font-mono text-xs">
       {/* Header */}
-      <div className="h-14 border-b border-omp-border px-5 flex items-center justify-between select-none">
+      <div className="h-12 border-b border-omp-border px-4 flex items-center justify-between select-none bg-omp-surface">
         <div className="flex items-center space-x-2">
-          <Terminal size={18} className="text-omp-accent" />
-          <h3 className="font-semibold text-white text-sm">Geliştirici Araç Kiti (DevTools)</h3>
+          <Rune name="code-terminal" size={15} className="text-omp-accent" />
+          <h3 className="font-bold text-white text-xs uppercase tracking-wider">
+            02 // DEVTOOLS & SYSTEM RUNTIME
+          </h3>
         </div>
         <button
           onClick={onClose}
-          className="p-1.5 rounded-md hover:bg-omp-surfaceLight text-omp-muted hover:text-white"
+          className="p-1 rounded-[2px] hover:bg-omp-bg text-omp-muted hover:text-white transition"
           title="Kapat"
         >
-          <X size={18} />
+          <Rune name="indicators-x" size={14} />
         </button>
       </div>
 
       {/* Tabs */}
-      <div className="flex border-b border-omp-border bg-omp-bg px-2 select-none overflow-x-auto text-xs">
+      <div className="flex border-b border-omp-border bg-omp-bg px-2 select-none overflow-x-auto text-xs divide-x divide-omp-border/60">
         <button
           onClick={() => {
             setActiveTab('git');
             setOutput('');
           }}
-          className={`py-2.5 px-3 font-medium border-b-2 transition whitespace-nowrap flex items-center space-x-1.5 ${
+          className={`py-2 px-3 font-mono text-[11px] uppercase tracking-wider transition whitespace-nowrap flex items-center space-x-1.5 ${
             activeTab === 'git'
-              ? 'border-omp-accent text-white'
-              : 'border-transparent text-omp-muted hover:text-white'
+              ? 'bg-omp-surface text-white font-bold border-b-2 border-b-omp-accent'
+              : 'text-omp-muted hover:text-white'
           }`}
         >
-          <GitBranch size={13} />
-          <span>Git & Commit</span>
+          <Rune name="code-git-branch" size={12} className={activeTab === 'git' ? 'text-omp-accent' : ''} />
+          <span>GIT & COMMIT</span>
         </button>
 
         <button
@@ -182,14 +158,14 @@ export const DevToolsDrawer: React.FC<DevToolsDrawerProps> = ({
             setActiveTab('processes');
             handleLoadProcesses();
           }}
-          className={`py-2.5 px-3 font-medium border-b-2 transition whitespace-nowrap flex items-center space-x-1.5 ${
+          className={`py-2 px-3 font-mono text-[11px] uppercase tracking-wider transition whitespace-nowrap flex items-center space-x-1.5 ${
             activeTab === 'processes'
-              ? 'border-omp-accent text-white'
-              : 'border-transparent text-omp-muted hover:text-white'
+              ? 'bg-omp-surface text-white font-bold border-b-2 border-b-omp-accent'
+              : 'text-omp-muted hover:text-white'
           }`}
         >
-          <Activity size={13} />
-          <span>Süreçler (ps)</span>
+          <Rune name="code-server" size={12} className={activeTab === 'processes' ? 'text-omp-accent' : ''} />
+          <span>PROCESSES</span>
         </button>
 
         <button
@@ -197,14 +173,14 @@ export const DevToolsDrawer: React.FC<DevToolsDrawerProps> = ({
             setActiveTab('cleanse');
             setOutput('');
           }}
-          className={`py-2.5 px-3 font-medium border-b-2 transition whitespace-nowrap flex items-center space-x-1.5 ${
+          className={`py-2 px-3 font-mono text-[11px] uppercase tracking-wider transition whitespace-nowrap flex items-center space-x-1.5 ${
             activeTab === 'cleanse'
-              ? 'border-omp-accent text-white'
-              : 'border-transparent text-omp-muted hover:text-white'
+              ? 'bg-omp-surface text-white font-bold border-b-2 border-b-omp-accent'
+              : 'text-omp-muted hover:text-white'
           }`}
         >
-          <Wrench size={13} />
-          <span>Cleanse Onarım</span>
+          <Rune name="tools-settings" size={12} className={activeTab === 'cleanse' ? 'text-omp-accent' : ''} />
+          <span>CLEANSE</span>
         </button>
 
         <button
@@ -212,14 +188,14 @@ export const DevToolsDrawer: React.FC<DevToolsDrawerProps> = ({
             setActiveTab('skills');
             setOutput('');
           }}
-          className={`py-2.5 px-3 font-medium border-b-2 transition whitespace-nowrap flex items-center space-x-1.5 ${
+          className={`py-2 px-3 font-mono text-[11px] uppercase tracking-wider transition whitespace-nowrap flex items-center space-x-1.5 ${
             activeTab === 'skills'
-              ? 'border-omp-accent text-white'
-              : 'border-transparent text-omp-muted hover:text-white'
+              ? 'bg-omp-surface text-white font-bold border-b-2 border-b-omp-accent'
+              : 'text-omp-muted hover:text-white'
           }`}
         >
-          <Sparkles size={13} />
-          <span>Beceriler & Eklentiler</span>
+          <Rune name="tools-sparkles" size={12} className={activeTab === 'skills' ? 'text-omp-accent' : ''} />
+          <span>SKILLS</span>
         </button>
 
         <button
@@ -227,75 +203,75 @@ export const DevToolsDrawer: React.FC<DevToolsDrawerProps> = ({
             setActiveTab('tokens');
             setOutput('');
           }}
-          className={`py-2.5 px-3 font-medium border-b-2 transition whitespace-nowrap flex items-center space-x-1.5 ${
+          className={`py-2 px-3 font-mono text-[11px] uppercase tracking-wider transition whitespace-nowrap flex items-center space-x-1.5 ${
             activeTab === 'tokens'
-              ? 'border-omp-accent text-white'
-              : 'border-transparent text-omp-muted hover:text-white'
+              ? 'bg-omp-surface text-white font-bold border-b-2 border-b-omp-accent'
+              : 'text-omp-muted hover:text-white'
           }`}
         >
-          <Calculator size={13} />
-          <span>Token Sayacı</span>
+          <Rune name="other-zap" size={12} className={activeTab === 'tokens' ? 'text-omp-accent' : ''} />
+          <span>TOKENS</span>
         </button>
       </div>
 
       {/* Main Content Body */}
-      <div className="flex-1 flex flex-col p-4 space-y-4 overflow-hidden">
+      <div className="flex-1 flex flex-col p-4 space-y-4 overflow-hidden bg-omp-surface">
         {/* Tab Controls */}
         {activeTab === 'git' && (
           <div className="flex items-center space-x-2">
             <button
               onClick={handleRunGitStatus}
               disabled={loading}
-              className="flex items-center space-x-1 px-3 py-1.5 rounded-lg bg-omp-surfaceLight hover:bg-omp-border text-xs text-white"
+              className="flex items-center space-x-1.5 px-3 py-1.5 rounded-[2px] bg-omp-bg hover:bg-omp-surfaceLight border border-omp-border text-xs text-white uppercase tracking-wider font-bold transition"
             >
-              <GitBranch size={13} />
-              <span>Durum (Status)</span>
+              <Rune name="code-git-branch" size={13} />
+              <span>STATUS</span>
             </button>
             <button
               onClick={handleRunGitDiff}
               disabled={loading}
-              className="flex items-center space-x-1 px-3 py-1.5 rounded-lg bg-omp-surfaceLight hover:bg-omp-border text-xs text-white"
+              className="flex items-center space-x-1.5 px-3 py-1.5 rounded-[2px] bg-omp-bg hover:bg-omp-surfaceLight border border-omp-border text-xs text-white uppercase tracking-wider font-bold transition"
             >
-              <RefreshCw size={13} />
-              <span>Farklar (Diff)</span>
+              <Rune name="schedule-refresh-cw" size={13} />
+              <span>DIFF</span>
             </button>
             <button
               onClick={handleRunCommit}
               disabled={loading}
-              className="flex items-center space-x-1 px-3 py-1.5 rounded-lg bg-omp-accent hover:bg-omp-accentHover text-xs text-white font-medium shadow"
+              className="flex items-center space-x-1.5 px-3 py-1.5 rounded-[2px] bg-omp-accent hover:bg-omp-accentHover text-xs text-white font-bold uppercase tracking-wider transition"
             >
-              <GitCommit size={13} />
-              <span>Yapay Zeka Commit Mesajı (omp commit)</span>
+              <Rune name="code-git-commit-horizontal" size={13} />
+              <span>OMP COMMIT</span>
             </button>
           </div>
         )}
 
         {activeTab === 'processes' && (
           <div className="flex items-center justify-between">
-            <span className="text-xs text-omp-muted">Arka planda çalışan omp daemonları</span>
+            <span className="text-[11px] text-omp-muted uppercase tracking-wider">OMP BACKGROUND DAEMONS</span>
             <button
               onClick={handleLoadProcesses}
               disabled={loading}
-              className="flex items-center space-x-1 px-2.5 py-1 rounded bg-omp-surfaceLight hover:bg-omp-border text-xs text-white"
+              className="flex items-center space-x-1.5 px-3 py-1 rounded-[2px] bg-omp-bg hover:bg-omp-surfaceLight border border-omp-border text-xs text-white uppercase tracking-wider"
             >
-              <RefreshCw size={12} className={loading ? 'animate-spin' : ''} />
-              <span>Yenile</span>
+              <Rune name="schedule-refresh-cw" size={12} className={loading ? 'animate-spin' : ''} />
+              <span>YENİLE</span>
             </button>
           </div>
         )}
 
         {activeTab === 'cleanse' && (
-          <div className="p-3 bg-omp-bg border border-omp-border rounded-xl space-y-2 text-xs">
-            <p className="text-omp-text">
-              <strong className="text-white">omp cleanse</strong>: Projedeki derleme, tip ve linter hatalarını ağırlıklı paralel subagentlar ile otomatik tespit edip onarır.
+          <div className="p-3 bg-omp-bg border border-omp-border rounded-[2px] space-y-2 text-xs">
+            <p className="text-zinc-300 font-sans">
+              <strong className="text-white font-mono">omp cleanse</strong>: Projedeki derleme, tip ve linter hatalarını paralel subagentlar ile otomatik tespit edip onarır.
             </p>
             <button
               onClick={handleRunCleanse}
               disabled={loading}
-              className="flex items-center space-x-1 px-3 py-1.5 rounded-lg bg-omp-accent hover:bg-omp-accentHover text-xs text-white font-medium"
+              className="flex items-center space-x-1.5 px-3 py-1.5 rounded-[2px] bg-omp-accent hover:bg-omp-accentHover text-xs text-white font-bold uppercase tracking-wider"
             >
-              <Play size={12} fill="currentColor" />
-              <span>Cleanse Onarımını Başlat</span>
+              <Rune name="playback-play" size={12} />
+              <span>CLEANSE BAŞLAT</span>
             </button>
           </div>
         )}
@@ -304,21 +280,21 @@ export const DevToolsDrawer: React.FC<DevToolsDrawerProps> = ({
           <div className="space-y-3">
             <div className="flex space-x-2">
               <div className="relative flex-1">
-                <Search size={14} className="absolute left-3 top-2.5 text-omp-muted" />
+                <Rune name="tools-search" size={13} className="absolute left-2.5 top-2.5 text-omp-muted" />
                 <input
                   type="text"
                   value={skillQuery}
                   onChange={(e) => setSkillQuery(e.target.value)}
-                  placeholder="skills.omp.sh üzerinden beceri ara (örn: git, docker)..."
-                  className="w-full bg-omp-bg border border-omp-border rounded-lg pl-9 pr-3 py-1.5 text-xs text-white placeholder-omp-muted focus:outline-none focus:border-omp-accent"
+                  placeholder="skills.omp.sh üzerinden beceri ara..."
+                  className="w-full bg-omp-bg border border-omp-border rounded-[2px] pl-8 pr-3 py-1.5 text-xs text-white placeholder-omp-muted focus:outline-none focus:border-omp-accent font-mono"
                 />
               </div>
               <button
                 onClick={handleSearchSkills}
                 disabled={loading || !skillQuery.trim()}
-                className="px-3 py-1.5 rounded-lg bg-omp-accent hover:bg-omp-accentHover text-xs text-white font-medium"
+                className="px-4 py-1.5 rounded-[2px] bg-omp-accent hover:bg-omp-accentHover text-xs text-white font-bold uppercase tracking-wider"
               >
-                Ara
+                ARA
               </button>
             </div>
           </div>
@@ -329,18 +305,18 @@ export const DevToolsDrawer: React.FC<DevToolsDrawerProps> = ({
             <textarea
               value={tokenInput}
               onChange={(e) => setTokenInput(e.target.value)}
-              placeholder="Token sayısını hesaplamak istediğiniz metni veya kodu buraya yapıştırın..."
+              placeholder="Token sayısını hesaplamak istediğiniz metni buraya yapıştırın..."
               rows={3}
-              className="w-full bg-omp-bg border border-omp-border rounded-lg p-2.5 text-xs text-white placeholder-omp-muted focus:outline-none focus:border-omp-accent resize-none font-mono"
+              className="w-full bg-omp-bg border border-omp-border rounded-[2px] p-2.5 text-xs text-white placeholder-omp-muted focus:outline-none focus:border-omp-accent resize-none font-mono"
             />
             <div className="flex justify-end">
               <button
                 onClick={handleCountTokens}
                 disabled={loading || !tokenInput.trim()}
-                className="flex items-center space-x-1 px-3 py-1.5 rounded-lg bg-omp-accent hover:bg-omp-accentHover text-xs text-white font-medium"
+                className="flex items-center space-x-1.5 px-3 py-1.5 rounded-[2px] bg-omp-accent hover:bg-omp-accentHover text-xs text-white font-bold uppercase tracking-wider"
               >
-                <Calculator size={13} />
-                <span>Tokenları Say (omp toks)</span>
+                <Rune name="other-zap" size={13} />
+                <span>HESAPLA (OMP TOKS)</span>
               </button>
             </div>
           </div>
@@ -348,26 +324,26 @@ export const DevToolsDrawer: React.FC<DevToolsDrawerProps> = ({
 
         {/* Status notice */}
         {loading && (
-          <div className="flex items-center space-x-2 text-xs text-omp-accent animate-pulse">
-            <RefreshCw size={13} className="animate-spin" />
+          <div className="flex items-center space-x-2 text-xs text-omp-accent animate-pulse font-mono">
+            <Rune name="schedule-refresh-cw" size={13} className="animate-spin" />
             <span>{statusText || 'İşleniyor...'}</span>
           </div>
         )}
 
         {/* Output Console View */}
-        <div className="flex-1 flex flex-col bg-omp-bg border border-omp-border rounded-xl overflow-hidden">
-          <div className="h-8 bg-omp-surface border-b border-omp-border px-3 flex items-center justify-between text-[11px] text-omp-muted font-mono select-none">
-            <span>Çıktı Konsolu</span>
+        <div className="flex-1 flex flex-col bg-omp-bg border border-omp-border rounded-[2px] overflow-hidden">
+          <div className="h-8 bg-omp-surface border-b border-omp-border px-3 flex items-center justify-between text-[10px] text-omp-muted font-mono select-none uppercase tracking-wider">
+            <span>TERMINAL OUTPUT // LOG</span>
             {output && (
               <button
                 onClick={() => setOutput('')}
                 className="hover:text-white"
               >
-                Temizle
+                TEMİZLE
               </button>
             )}
           </div>
-          <pre className="flex-1 p-3 font-mono text-xs text-omp-text overflow-y-auto whitespace-pre-wrap leading-relaxed select-text">
+          <pre className="flex-1 p-3 font-mono text-xs text-zinc-200 overflow-y-auto whitespace-pre-wrap leading-relaxed select-text">
             {output || 'Komut çalıştırmak için yukarıdaki butonları kullanın.'}
           </pre>
         </div>

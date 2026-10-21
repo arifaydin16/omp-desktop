@@ -3,6 +3,8 @@
 import {update} from '../models';
 import {omp} from '../models';
 
+export function CancelLogin():Promise<void>;
+
 export function CheckForUpdates():Promise<update.UpdateStatus>;
 
 export function CheckPathExists(arg1:string):Promise<boolean>;
@@ -17,9 +19,17 @@ export function ExecuteAgent(arg1:omp.AgentRunOptions):Promise<void>;
 
 export function ExportSessionHTML(arg1:string):Promise<string>;
 
+export function GetAuthCredentials():Promise<Array<omp.AuthCredentialItem>>;
+
 export function GetBinaryInfo():Promise<Record<string, string>>;
 
 export function GetConfig():Promise<Record<string, any>>;
+
+export function GetConfigKey(arg1:string):Promise<string>;
+
+export function GetCurrentProfile():Promise<string>;
+
+export function GetGitBranch(arg1:string):Promise<string>;
 
 export function GetModelRoles():Promise<Record<string, string>>;
 
@@ -28,6 +38,8 @@ export function GetModels():Promise<omp.ModelCatalog>;
 export function GetPlugins():Promise<string>;
 
 export function GetProcesses():Promise<string>;
+
+export function GetProfiles():Promise<Array<string>>;
 
 export function GetSessionDetail(arg1:string):Promise<omp.SessionDetail>;
 
@@ -41,11 +53,17 @@ export function GetUpdateStatus():Promise<update.UpdateStatus>;
 
 export function GetUsage():Promise<Record<string, any>>;
 
+export function GetWorkspaceFiles(arg1:string,arg2:string):Promise<Array<omp.WorkspaceFileItem>>;
+
 export function InstallPlugin(arg1:string):Promise<string>;
 
 export function InstallSkill(arg1:string):Promise<string>;
 
 export function InstallUpdate(arg1:boolean,arg2:boolean,arg3:boolean):Promise<string>;
+
+export function LogoutProvider(arg1:string):Promise<void>;
+
+export function OpenBrowserURL(arg1:string):Promise<void>;
 
 export function PackSession(arg1:string,arg2:string):Promise<string>;
 
@@ -61,6 +79,8 @@ export function RunGitDiff(arg1:string):Promise<string>;
 
 export function RunGitStatus(arg1:string):Promise<string>;
 
+export function SaveApiKeyCredential(arg1:string,arg2:string):Promise<void>;
+
 export function SaveClipboardImage(arg1:string,arg2:string):Promise<string>;
 
 export function SaveCustomSkill(arg1:string,arg2:string,arg3:string,arg4:boolean):Promise<void>;
@@ -71,6 +91,8 @@ export function SelectDirectory():Promise<string>;
 
 export function SelectFiles():Promise<Array<string>>;
 
+export function SendLoginInput(arg1:string):Promise<void>;
+
 export function SendStdin(arg1:string):Promise<void>;
 
 export function SetAdvisorEnabled(arg1:boolean):Promise<void>;
@@ -78,5 +100,9 @@ export function SetAdvisorEnabled(arg1:boolean):Promise<void>;
 export function SetConfigKey(arg1:string,arg2:string):Promise<void>;
 
 export function SetModelRole(arg1:string,arg2:string):Promise<void>;
+
+export function SetProfile(arg1:string):Promise<void>;
+
+export function StartLogin(arg1:string,arg2:number):Promise<void>;
 
 export function StopAgent():Promise<void>;

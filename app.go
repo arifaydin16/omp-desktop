@@ -248,6 +248,36 @@ func (a *App) CheckPathExists(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil
 }
+// GetWorkspaceFiles returns files and folders in workspace matching query
+func (a *App) GetWorkspaceFiles(cwd string, query string) ([]omp.WorkspaceFileItem, error) {
+	return a.ompService.GetWorkspaceFiles(cwd, query)
+}
+// GetGitBranch returns current git branch name in cwd if available
+func (a *App) GetGitBranch(cwd string) (string, error) {
+	return a.ompService.GetGitBranch(cwd)
+}
+// GetProfiles returns list of available profile names
+func (a *App) GetProfiles() []string {
+	return a.ompService.GetProfiles()
+}
+
+// SetProfile sets the active profile in the backend service
+func (a *App) SetProfile(profile string) {
+	a.ompService.SetProfile(profile)
+}
+
+// GetCurrentProfile returns the current active profile name
+func (a *App) GetCurrentProfile() string {
+	return a.ompService.GetCurrentProfile()
+}
+// GetConfigKey returns a specific configuration setting for the active profile
+func (a *App) GetConfigKey(key string) (string, error) {
+	return a.ompService.GetConfigKey(key)
+}
+
+
+
+
 
 // GetModelRoles returns current role mapping from omp config
 func (a *App) GetModelRoles() (map[string]string, error) {
@@ -299,4 +329,39 @@ func (a *App) SetAdvisorEnabled(enabled bool) error {
 	}
 	err := a.ompService.SetConfigKey("advisor.enabled", val)
 	return err
+}
+
+// GetAuthCredentials returns list of stored credentials
+func (a *App) GetAuthCredentials() ([]omp.AuthCredentialItem, error) {
+	return a.ompService.GetAuthCredentials()
+}
+
+// StartLogin initiates provider or interactive login
+func (a *App) StartLogin(providerId string, providerIndex int) error {
+	return a.ompService.StartLogin(providerId, providerIndex)
+}
+
+// SendLoginInput sends manual text to active login process
+func (a *App) SendLoginInput(input string) error {
+	return a.ompService.SendLoginInput(input)
+}
+
+// CancelLogin terminates active login process
+func (a *App) CancelLogin() error {
+	return a.ompService.CancelLogin()
+}
+
+// SaveApiKeyCredential saves an API key credential
+func (a *App) SaveApiKeyCredential(provider string, apiKey string) error {
+	return a.ompService.SaveApiKeyCredential(provider, apiKey)
+}
+
+// LogoutProvider removes a provider credential
+func (a *App) LogoutProvider(provider string) error {
+	return a.ompService.LogoutProvider(provider)
+}
+
+// OpenBrowserURL opens a URL in default browser
+func (a *App) OpenBrowserURL(url string) error {
+	return a.ompService.OpenBrowserURL(url)
 }

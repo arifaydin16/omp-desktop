@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -57,6 +58,7 @@ type SessionSummary struct {
 	Model     string    `json:"model"`
 	UpdatedAt time.Time `json:"updatedAt"`
 	MsgCount  int       `json:"msgCount"`
+	TotalCost float64   `json:"totalCost"`
 }
 
 // SessionDetail represents full session details and messages
@@ -91,17 +93,47 @@ type SkillItem struct {
 	BaseDir     string `json:"baseDir"`
 	IsCustom    bool   `json:"isCustom"`
 }
+// WorkspaceFileItem represents a file or directory in workspace
+type WorkspaceFileItem struct {
+	Name     string `json:"name"`     // e.g. "css/" or "App.tsx"
+	RelPath  string `json:"relPath"`  // e.g. "assets/css" or "frontend/src/App.tsx"
+	FullPath string `json:"fullPath"` // absolute path on disk
+	IsDir    bool   `json:"isDir"`
+}
 
+// AuthCredentialItem represents a stored credential in omp
+type AuthCredentialItem struct {
+	Provider     string `json:"provider"`
+	Type         string `json:"type"` // "oauth" | "api_key"
+	Key          string `json:"key,omitempty"` // masked key
+	Email        string `json:"email,omitempty"`
+	Expires      int64  `json:"expires,omitempty"`
+	ProjectId    string `json:"projectId,omitempty"`
+	AuthorizedAt int64  `json:"authorizedAt,omitempty"`
+}
+
+// LoginEvent is emitted during an active login flow
+type LoginEvent struct {
+	Type      string `json:"type"` // "started" | "url" | "waiting" | "prompt" | "success" | "error" | "cancelled"
+	Provider  string `json:"provider"`
+	URL       string `json:"url,omitempty"`
+	LaunchURL string `json:"launchUrl,omitempty"`
+	Message   string `json:"message,omitempty"`
+}
 
 // Service is the main bridge for omp CLI, RPC and file management
 type Service struct {
-	ctx        context.Context
-	ompBin     string
-	activeCmd  *exec.Cmd
-	cmdStdin   io.WriteCloser
-	isWorking  bool
-	mutex      sync.Mutex
-	sessionDir string
+	ctx            context.Context
+	ompBin         string
+	activeCmd      *exec.Cmd
+	cmdStdin       io.WriteCloser
+	isWorking      bool
+	mutex          sync.Mutex
+	sessionDir     string
+	currentProfile string
+	loginCmd       *exec.Cmd
+	loginStdin     io.WriteCloser
+	loginMutex     sync.Mutex
 }
 
 func NewService() *Service {
@@ -114,6 +146,67 @@ func NewService() *Service {
 		sessionDir: sessDir,
 	}
 }
+// SetProfile sets the active profile name and updates the session directory
+func (s *Service) SetProfile(profile string) {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+	cleaned := strings.TrimSpace(profile)
+	if cleaned == "" {
+		cleaned = "default"
+	}
+	s.currentProfile = cleaned
+
+	homeDir, _ := os.UserHomeDir()
+	if cleaned != "default" {
+		s.sessionDir = filepath.Join(homeDir, ".omp", "profiles", cleaned, "agent", "sessions")
+	} else {
+		s.sessionDir = filepath.Join(homeDir, ".omp", "agent", "sessions")
+	}
+}
+
+// GetCurrentProfile returns current active profile name
+func (s *Service) GetCurrentProfile() string {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+	if s.currentProfile == "" {
+		return "default"
+	}
+	return s.currentProfile
+}
+
+// GetProfiles returns all available profile names from ~/.omp/profiles
+func (s *Service) GetProfiles() []string {
+	profiles := []string{"default"}
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return profiles
+	}
+	profDir := filepath.Join(homeDir, ".omp", "profiles")
+	entries, err := os.ReadDir(profDir)
+	if err == nil {
+		for _, e := range entries {
+			if e.IsDir() && e.Name() != "default" {
+				profiles = append(profiles, e.Name())
+			}
+		}
+	}
+	return profiles
+}
+
+func (s *Service) configArgs(subArgs ...string) []string {
+	var args []string
+	s.mutex.Lock()
+	prof := s.currentProfile
+	s.mutex.Unlock()
+
+	if prof != "" && prof != "default" {
+		args = append(args, "--profile="+prof)
+	}
+	args = append(args, "config")
+	args = append(args, subArgs...)
+	return args
+}
+
 
 func (s *Service) SetContext(ctx context.Context) {
 	s.ctx = ctx
@@ -209,8 +302,14 @@ func (s *Service) ExecuteAgent(opts AgentRunOptions) error {
 	if opts.Advisor {
 		args = append(args, "--advisor")
 	}
-	if opts.Profile != "" {
-		args = append(args, "--profile="+opts.Profile)
+	prof := opts.Profile
+	if prof == "" {
+		s.mutex.Lock()
+		prof = s.currentProfile
+		s.mutex.Unlock()
+	}
+	if prof != "" && prof != "default" {
+		args = append(args, "--profile="+prof)
 	}
 	if opts.SessionID != "" {
 		args = append(args, "--resume="+opts.SessionID)
@@ -223,9 +322,15 @@ func (s *Service) ExecuteAgent(opts AgentRunOptions) error {
 		}
 	}
 
-	// User prompt
-	if strings.TrimSpace(opts.Prompt) != "" {
-		args = append(args, opts.Prompt)
+	// User prompt & Skill discovery
+	prompt := strings.TrimSpace(opts.Prompt)
+	if prompt != "" {
+		skillRegex := regexp.MustCompile(`(?i)(?:^|\s)\[?(?:/skill:)([a-zA-Z0-9_-]+)\]?`)
+		if matches := skillRegex.FindStringSubmatch(prompt); len(matches) > 1 {
+			skillName := matches[1]
+			args = append(args, "--skills="+skillName)
+		}
+		args = append(args, prompt)
 	}
 
 	cmd := prepareCmd(exec.Command(s.ompBin, args...))
@@ -404,8 +509,10 @@ func (s *Service) GetUsage() (map[string]interface{}, error) {
 }
 
 // GetConfig returns all configuration settings as JSON
+// GetConfig returns all configuration settings as JSON for the active profile
 func (s *Service) GetConfig() (map[string]interface{}, error) {
-	cmd := prepareCmd(exec.Command(s.ompBin, "config", "list", "--json"))
+	args := s.configArgs("list", "--json")
+	cmd := prepareCmd(exec.Command(s.ompBin, args...))
 	out, err := cmd.Output()
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch config: %w", err)
@@ -418,9 +525,10 @@ func (s *Service) GetConfig() (map[string]interface{}, error) {
 	return result, nil
 }
 
-// GetConfigKey returns a specific configuration setting
+// GetConfigKey returns a specific configuration setting for the active profile
 func (s *Service) GetConfigKey(key string) (string, error) {
-	cmd := prepareCmd(exec.Command(s.ompBin, "config", "get", key))
+	args := s.configArgs("get", key)
+	cmd := prepareCmd(exec.Command(s.ompBin, args...))
 	out, err := cmd.Output()
 	if err != nil {
 		return "", err
@@ -428,9 +536,10 @@ func (s *Service) GetConfigKey(key string) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
-// SetConfigKey updates a setting value
+// SetConfigKey updates a setting value for the active profile
 func (s *Service) SetConfigKey(key string, value string) error {
-	cmd := prepareCmd(exec.Command(s.ompBin, "config", "set", key, value))
+	args := s.configArgs("set", key, value)
+	cmd := prepareCmd(exec.Command(s.ompBin, args...))
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("failed to set config %s: %s (%w)", key, string(out), err)
@@ -460,6 +569,36 @@ func (s *Service) RunGitStatus(cwd string) (string, error) {
 	}
 	return string(out), nil
 }
+// GetGitBranch returns current git branch in cwd if it's a git repository
+func (s *Service) GetGitBranch(cwd string) (string, error) {
+	cmd := prepareCmd(exec.Command("git", "branch", "--show-current"))
+	if cwd != "" {
+		cmd.Dir = cwd
+	}
+	out, err := cmd.Output()
+	if err != nil {
+		cmd2 := prepareCmd(exec.Command("git", "rev-parse", "--abbrev-ref", "HEAD"))
+		if cwd != "" {
+			cmd2.Dir = cwd
+		}
+		out2, err2 := cmd2.Output()
+		if err2 != nil {
+			return "", nil
+		}
+		return strings.TrimSpace(string(out2)), nil
+	}
+	branch := strings.TrimSpace(string(out))
+	if branch == "" {
+		cmd2 := prepareCmd(exec.Command("git", "rev-parse", "--short", "HEAD"))
+		if cwd != "" {
+			cmd2.Dir = cwd
+		}
+		out2, _ := cmd2.Output()
+		branch = strings.TrimSpace(string(out2))
+	}
+	return branch, nil
+}
+
 
 // RunGitDiff returns git diff
 func (s *Service) RunGitDiff(cwd string) (string, error) {
@@ -852,6 +991,13 @@ func parseSessionSummary(filePath string, projectName string) SessionSummary {
 				summary.Model = m
 			}
 		}
+		if usage, ok := row["usage"].(map[string]interface{}); ok {
+			if costMap, ok := usage["cost"].(map[string]interface{}); ok {
+				if tot, ok := costMap["total"].(float64); ok {
+					summary.TotalCost += tot
+				}
+			}
+		}
 	}
 
 	summary.MsgCount = lineCount
@@ -916,4 +1062,511 @@ func (s *Service) PackSession(sessionPath string, targetArchive string) (string,
 		return string(out), err
 	}
 	return string(out), nil
+}
+
+// GetWorkspaceFiles scans the workspace directory for files and folders matching query
+func (s *Service) GetWorkspaceFiles(cwd string, query string) ([]WorkspaceFileItem, error) {
+	if cwd == "" {
+		var err error
+		cwd, err = os.Getwd()
+		if err != nil {
+			return nil, err
+		}
+	}
+	cwd = filepath.Clean(cwd)
+
+	// Clean query
+	query = strings.TrimPrefix(query, "@")
+	query = strings.ReplaceAll(query, "\\", "/")
+	queryLower := strings.ToLower(query)
+
+	ignoredDirs := map[string]bool{
+		".git":         true,
+		"node_modules": true,
+		".omp":         true,
+		"dist":         true,
+		"build":        true,
+		"bin":          true,
+		".cache":       true,
+		".next":        true,
+		".nuxt":        true,
+		"vendor":       true,
+		".idea":        true,
+		".vscode":      true,
+		"__pycache__":  true,
+		".venv":        true,
+		"venv":         true,
+		"target":       true,
+		".obsidian":    true,
+	}
+
+	var items []WorkspaceFileItem
+	maxItems := 150
+
+	err := filepath.WalkDir(cwd, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if path == cwd {
+			return nil
+		}
+
+		name := d.Name()
+		if d.IsDir() {
+			if ignoredDirs[name] {
+				return filepath.SkipDir
+			}
+		}
+
+		rel, err := filepath.Rel(cwd, path)
+		if err != nil || rel == "." {
+			return nil
+		}
+		rel = filepath.ToSlash(rel)
+		relLower := strings.ToLower(rel)
+		nameLower := strings.ToLower(name)
+
+		displayName := name
+		if d.IsDir() {
+			displayName += "/"
+		}
+
+		matches := false
+		if queryLower == "" {
+			slashCount := strings.Count(rel, "/")
+			if slashCount <= 1 {
+				matches = true
+			}
+		} else {
+			if strings.HasPrefix(relLower, queryLower) {
+				matches = true
+			} else if strings.Contains(relLower, queryLower) || strings.Contains(nameLower, queryLower) {
+				matches = true
+			}
+		}
+
+		if matches {
+			items = append(items, WorkspaceFileItem{
+				Name:     displayName,
+				RelPath:  rel,
+				FullPath: path,
+				IsDir:    d.IsDir(),
+			})
+			if len(items) >= maxItems {
+				return filepath.SkipAll
+			}
+		}
+
+		return nil
+	})
+
+	if err != nil && err != filepath.SkipAll {
+		return nil, err
+	}
+
+	sort.Slice(items, func(i, j int) bool {
+		iPref := strings.HasPrefix(strings.ToLower(items[i].RelPath), queryLower)
+		jPref := strings.HasPrefix(strings.ToLower(items[j].RelPath), queryLower)
+		if iPref != jPref {
+			return iPref
+		}
+
+		if items[i].IsDir != items[j].IsDir {
+			return items[i].IsDir
+		}
+
+		iDepth := strings.Count(items[i].RelPath, "/")
+		jDepth := strings.Count(items[j].RelPath, "/")
+		if iDepth != jDepth {
+			return iDepth < jDepth
+		}
+
+		return items[i].RelPath < items[j].RelPath
+	})
+
+	return items, nil
+}
+
+// GetAuthCredentials returns the list of stored credentials for the active profile
+func (s *Service) GetAuthCredentials() ([]AuthCredentialItem, error) {
+	var args []string
+	s.mutex.Lock()
+	prof := s.currentProfile
+	s.mutex.Unlock()
+	if prof != "" && prof != "default" {
+		args = append(args, "--profile="+prof)
+	}
+	args = append(args, "auth", "export")
+	cmd := prepareCmd(exec.Command(s.ompBin, args...))
+	out, err := cmd.CombinedOutput()
+	if err != nil && len(out) == 0 {
+		return nil, fmt.Errorf("auth export failed: %w", err)
+	}
+
+	raw := string(out)
+	start := strings.Index(raw, "{")
+	end := strings.LastIndex(raw, "}")
+	if start == -1 || end == -1 || end <= start {
+		return []AuthCredentialItem{}, nil
+	}
+
+	jsonBlob := raw[start : end+1]
+	var data struct {
+		Version     int `json:"version"`
+		Credentials []struct {
+			Provider   string `json:"provider"`
+			Credential struct {
+				Type         string `json:"type"`
+				Key          string `json:"key"`
+				Email        string `json:"email"`
+				Expires      int64  `json:"expires"`
+				ProjectId    string `json:"projectId"`
+				AuthorizedAt int64  `json:"authorizedAt"`
+			} `json:"credential"`
+		} `json:"credentials"`
+	}
+
+	if err := json.Unmarshal([]byte(jsonBlob), &data); err != nil {
+		return nil, fmt.Errorf("failed to parse auth export json: %w", err)
+	}
+
+	var results []AuthCredentialItem
+	for _, c := range data.Credentials {
+		maskedKey := ""
+		if c.Credential.Key != "" {
+			k := c.Credential.Key
+			if len(k) > 12 {
+				maskedKey = k[:6] + "..." + k[len(k)-4:]
+			} else {
+				maskedKey = "***"
+			}
+		}
+
+		results = append(results, AuthCredentialItem{
+			Provider:     c.Provider,
+			Type:         c.Credential.Type,
+			Key:          maskedKey,
+			Email:        c.Credential.Email,
+			Expires:      c.Credential.Expires,
+			ProjectId:    c.Credential.ProjectId,
+			AuthorizedAt: c.Credential.AuthorizedAt,
+		})
+	}
+
+	return results, nil
+}
+
+// StartLogin begins a login process for a provider or interactive choice
+func (s *Service) StartLogin(providerId string, providerIndex int) error {
+	s.loginMutex.Lock()
+	if s.loginCmd != nil && s.loginCmd.Process != nil {
+		_ = s.loginCmd.Process.Kill()
+		s.loginCmd = nil
+		s.loginStdin = nil
+	}
+	s.loginMutex.Unlock()
+
+	var args []string
+	s.mutex.Lock()
+	prof := s.currentProfile
+	s.mutex.Unlock()
+	if prof != "" && prof != "default" {
+		args = append(args, "--profile="+prof)
+	}
+	args = append(args, "login")
+	if strings.TrimSpace(providerId) != "" {
+		args = append(args, strings.TrimSpace(providerId))
+	}
+
+	cmd := prepareCmd(exec.Command(s.ompBin, args...))
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		return fmt.Errorf("failed to create stdin pipe: %w", err)
+	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return fmt.Errorf("failed to create stdout pipe: %w", err)
+	}
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		return fmt.Errorf("failed to create stderr pipe: %w", err)
+	}
+
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("failed to start login process: %w", err)
+	}
+
+	s.loginMutex.Lock()
+	s.loginCmd = cmd
+	s.loginStdin = stdin
+	s.loginMutex.Unlock()
+
+	if s.ctx != nil {
+		runtime.EventsEmit(s.ctx, "login_event", LoginEvent{
+			Type:     "started",
+			Provider: providerId,
+			Message:  "Giriş işlemi başlatıldı...",
+		})
+	}
+
+	// If providerIndex was given and providerId was empty, send index after a small delay
+	if providerId == "" && providerIndex > 0 {
+		go func() {
+			time.Sleep(300 * time.Millisecond)
+			s.loginMutex.Lock()
+			if s.loginStdin != nil {
+				_, _ = fmt.Fprintf(s.loginStdin, "%d\n", providerIndex)
+			}
+			s.loginMutex.Unlock()
+		}()
+	}
+
+	urlRegex := regexp.MustCompile(`https?://[^\s"'>]+`)
+
+	handleLine := func(line string) {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			return
+		}
+
+		if strings.Contains(line, "Open this URL in your browser:") {
+			foundUrl := urlRegex.FindString(line)
+			if foundUrl != "" && s.ctx != nil {
+				runtime.EventsEmit(s.ctx, "login_event", LoginEvent{
+					Type:     "url",
+					Provider: providerId,
+					URL:      foundUrl,
+					Message:  "Oturum açma bağlantısı oluşturuldu.",
+				})
+				runtime.BrowserOpenURL(s.ctx, foundUrl)
+			}
+			return
+		}
+
+		if strings.Contains(line, "Local shortcut (this machine only):") {
+			foundLaunch := urlRegex.FindString(line)
+			if foundLaunch != "" && s.ctx != nil {
+				runtime.EventsEmit(s.ctx, "login_event", LoginEvent{
+					Type:      "url",
+					Provider:  providerId,
+					LaunchURL: foundLaunch,
+					Message:   "Yerel yönlendirme hazır.",
+				})
+			}
+			return
+		}
+
+		if strings.Contains(line, "Waiting for browser authentication") {
+			if s.ctx != nil {
+				runtime.EventsEmit(s.ctx, "login_event", LoginEvent{
+					Type:     "waiting",
+					Provider: providerId,
+					Message:  "Tarayıcıda kimlik doğrulama bekleniyor...",
+				})
+			}
+			return
+		}
+
+		if strings.Contains(line, "Successfully logged in to") {
+			if s.ctx != nil {
+				runtime.EventsEmit(s.ctx, "login_event", LoginEvent{
+					Type:     "success",
+					Provider: providerId,
+					Message:  line,
+				})
+			}
+			return
+		}
+
+		if strings.Contains(line, "Create or copy your API key") || strings.Contains(line, "Enter API key") {
+			if s.ctx != nil {
+				runtime.EventsEmit(s.ctx, "login_event", LoginEvent{
+					Type:     "prompt",
+					Provider: providerId,
+					Message:  line,
+				})
+			}
+			return
+		}
+
+		if strings.HasPrefix(line, "https://") || strings.HasPrefix(line, "http://") {
+			if s.ctx != nil {
+				runtime.EventsEmit(s.ctx, "login_event", LoginEvent{
+					Type:     "url",
+					Provider: providerId,
+					URL:      line,
+					Message:  "Yetkilendirme bağlantısı",
+				})
+			}
+		}
+	}
+
+	go func() {
+		scanner := bufio.NewScanner(stdout)
+		for scanner.Scan() {
+			handleLine(scanner.Text())
+		}
+	}()
+
+	go func() {
+		scanner := bufio.NewScanner(stderr)
+		for scanner.Scan() {
+			handleLine(scanner.Text())
+		}
+	}()
+
+	go func() {
+		err := cmd.Wait()
+		s.loginMutex.Lock()
+		s.loginCmd = nil
+		s.loginStdin = nil
+		s.loginMutex.Unlock()
+
+		if s.ctx != nil {
+			if err == nil {
+				runtime.EventsEmit(s.ctx, "login_event", LoginEvent{
+					Type:     "success",
+					Provider: providerId,
+					Message:  "Giriş başarıyla tamamlandı!",
+				})
+			} else {
+				errMsg := err.Error()
+				if !strings.Contains(errMsg, "killed") && !strings.Contains(errMsg, "interrupt") {
+					runtime.EventsEmit(s.ctx, "login_event", LoginEvent{
+						Type:     "error",
+						Provider: providerId,
+						Message:  fmt.Sprintf("Giriş sonlandı: %v", err),
+					})
+				}
+			}
+		}
+	}()
+
+	return nil
+}
+
+// SendLoginInput sends text to the active login process's stdin
+func (s *Service) SendLoginInput(input string) error {
+	s.loginMutex.Lock()
+	defer s.loginMutex.Unlock()
+	if s.loginStdin == nil {
+		return fmt.Errorf("no active login process waiting for input")
+	}
+	_, err := fmt.Fprintf(s.loginStdin, "%s\n", strings.TrimSpace(input))
+	return err
+}
+
+// CancelLogin terminates any active login process
+func (s *Service) CancelLogin() error {
+	s.loginMutex.Lock()
+	defer s.loginMutex.Unlock()
+	if s.loginCmd != nil && s.loginCmd.Process != nil {
+		err := s.loginCmd.Process.Kill()
+		s.loginCmd = nil
+		s.loginStdin = nil
+		if s.ctx != nil {
+			runtime.EventsEmit(s.ctx, "login_event", LoginEvent{
+				Type:    "cancelled",
+				Message: "Giriş işlemi iptal edildi.",
+			})
+		}
+		return err
+	}
+	return nil
+}
+
+// SaveApiKeyCredential saves an API key directly using omp auth import
+func (s *Service) SaveApiKeyCredential(provider string, apiKey string) error {
+	provider = strings.TrimSpace(provider)
+	apiKey = strings.TrimSpace(apiKey)
+	if provider == "" || apiKey == "" {
+		return fmt.Errorf("provider and apiKey cannot be empty")
+	}
+
+	payload := map[string]interface{}{
+		"version": 1,
+		"credentials": []map[string]interface{}{
+			{
+				"provider": provider,
+				"credential": map[string]interface{}{
+					"type":   "api_key",
+					"key":    apiKey,
+					"source": "login",
+				},
+			},
+		},
+	}
+
+	bytes, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("failed to marshal credential json: %w", err)
+	}
+
+	var args []string
+	s.mutex.Lock()
+	prof := s.currentProfile
+	s.mutex.Unlock()
+	if prof != "" && prof != "default" {
+		args = append(args, "--profile="+prof)
+	}
+	args = append(args, "auth", "import", "-")
+
+	cmd := prepareCmd(exec.Command(s.ompBin, args...))
+	cmd.Stdin = strings.NewReader(string(bytes))
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("failed to import credential: %s (%w)", string(out), err)
+	}
+
+	return nil
+}
+
+// LogoutProvider removes a provider credential from agent.db
+func (s *Service) LogoutProvider(provider string) error {
+	provider = strings.TrimSpace(provider)
+	if provider == "" {
+		return fmt.Errorf("provider cannot be empty")
+	}
+
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return fmt.Errorf("cannot find home dir: %w", err)
+	}
+
+	s.mutex.Lock()
+	prof := s.currentProfile
+	s.mutex.Unlock()
+
+	var dbPath string
+	if prof != "" && prof != "default" {
+		dbPath = filepath.Join(homeDir, ".omp", "profiles", prof, "agent", "agent.db")
+	} else {
+		dbPath = filepath.Join(homeDir, ".omp", "agent", "agent.db")
+	}
+
+	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
+		return fmt.Errorf("agent database not found at %s", dbPath)
+	}
+
+	query := fmt.Sprintf("DELETE FROM auth_credentials WHERE provider = '%s';", provider)
+	cmd := prepareCmd(exec.Command("sqlite3", dbPath, query))
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		pyScript := fmt.Sprintf("import sqlite3; conn = sqlite3.connect(r'%s'); conn.execute(\"DELETE FROM auth_credentials WHERE provider = '%s'\"); conn.commit(); conn.close()", dbPath, provider)
+		pyCmd := prepareCmd(exec.Command("python", "-c", pyScript))
+		pyOut, pyErr := pyCmd.CombinedOutput()
+		if pyErr != nil {
+			return fmt.Errorf("failed to delete credential: %s (%s)", string(out), string(pyOut))
+		}
+	}
+
+	return nil
+}
+
+// OpenBrowserURL opens a web URL in the user's default browser
+func (s *Service) OpenBrowserURL(url string) error {
+	if s.ctx != nil && strings.TrimSpace(url) != "" {
+		runtime.BrowserOpenURL(s.ctx, strings.TrimSpace(url))
+	}
+	return nil
 }

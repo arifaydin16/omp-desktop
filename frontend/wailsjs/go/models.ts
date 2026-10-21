@@ -42,6 +42,30 @@ export namespace omp {
 	        this.files = source["files"];
 	    }
 	}
+	export class AuthCredentialItem {
+	    provider: string;
+	    type: string;
+	    key?: string;
+	    email?: string;
+	    expires?: number;
+	    projectId?: string;
+	    authorizedAt?: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new AuthCredentialItem(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.provider = source["provider"];
+	        this.type = source["type"];
+	        this.key = source["key"];
+	        this.email = source["email"];
+	        this.expires = source["expires"];
+	        this.projectId = source["projectId"];
+	        this.authorizedAt = source["authorizedAt"];
+	    }
+	}
 	export class ModelEntry {
 	    id: string;
 	    provider: string;
@@ -115,6 +139,7 @@ export namespace omp {
 	    // Go type: time
 	    updatedAt: any;
 	    msgCount: number;
+	    totalCost: number;
 	
 	    static createFrom(source: any = {}) {
 	        return new SessionSummary(source);
@@ -130,6 +155,7 @@ export namespace omp {
 	        this.model = source["model"];
 	        this.updatedAt = this.convertValues(source["updatedAt"], null);
 	        this.msgCount = source["msgCount"];
+	        this.totalCost = source["totalCost"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -201,6 +227,24 @@ export namespace omp {
 	        this.filePath = source["filePath"];
 	        this.baseDir = source["baseDir"];
 	        this.isCustom = source["isCustom"];
+	    }
+	}
+	export class WorkspaceFileItem {
+	    name: string;
+	    relPath: string;
+	    fullPath: string;
+	    isDir: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new WorkspaceFileItem(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.relPath = source["relPath"];
+	        this.fullPath = source["fullPath"];
+	        this.isDir = source["isDir"];
 	    }
 	}
 
