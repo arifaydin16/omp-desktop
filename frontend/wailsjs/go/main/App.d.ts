@@ -9,6 +9,8 @@ export function CheckForUpdates():Promise<update.UpdateStatus>;
 
 export function CheckPathExists(arg1:string):Promise<boolean>;
 
+export function ClearActiveSession():Promise<void>;
+
 export function CountTokens(arg1:string):Promise<string>;
 
 export function DeleteModelRole(arg1:string):Promise<void>;
@@ -18,6 +20,8 @@ export function DeleteSkill(arg1:string,arg2:string):Promise<void>;
 export function ExecuteAgent(arg1:omp.AgentRunOptions):Promise<void>;
 
 export function ExportSessionHTML(arg1:string):Promise<string>;
+
+export function GetActiveSessionID():Promise<string>;
 
 export function GetAuthCredentials():Promise<Array<omp.AuthCredentialItem>>;
 
@@ -96,6 +100,8 @@ export function SelectFiles():Promise<Array<string>>;
 export function SendLoginInput(arg1:string):Promise<void>;
 
 export function SendStdin(arg1:string):Promise<void>;
+
+export function SetActiveSessionID(arg1:string):Promise<void>;
 
 export function SetAdvisorEnabled(arg1:boolean):Promise<void>;
 

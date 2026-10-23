@@ -131,6 +131,7 @@ type Service struct {
 	isWorking      bool
 	mutex          sync.Mutex
 	sessionDir     string
+	activeSessionID string
 	currentProfile string
 	loginCmd       *exec.Cmd
 	loginStdin     io.WriteCloser
@@ -173,6 +174,27 @@ func (s *Service) GetCurrentProfile() string {
 		return "default"
 	}
 	return s.currentProfile
+}
+
+// SetActiveSessionID sets or resets the current active session ID
+func (s *Service) SetActiveSessionID(id string) {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+	s.activeSessionID = strings.TrimSpace(id)
+}
+
+// GetActiveSessionID gets the current active session ID
+func (s *Service) GetActiveSessionID() string {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+	return s.activeSessionID
+}
+
+// ClearActiveSession clears the current active session ID
+func (s *Service) ClearActiveSession() {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+	s.activeSessionID = ""
 }
 
 // GetProfiles returns all available profile names from ~/.omp/profiles
@@ -268,8 +290,7 @@ func (s *Service) ExecuteAgent(opts AgentRunOptions) error {
 	}()
 
 	var args []string
-	args = append(args, "-p", "--print-thoughts")
-
+	args = append(args, "-p", "--mode=json", "--print-thoughts")
 	if opts.Model != "" {
 		args = append(args, "--model="+opts.Model)
 	}
@@ -312,8 +333,14 @@ func (s *Service) ExecuteAgent(opts AgentRunOptions) error {
 	if prof != "" && prof != "default" {
 		args = append(args, "--profile="+prof)
 	}
-	if opts.SessionID != "" {
-		args = append(args, "--resume="+opts.SessionID)
+	sessID := opts.SessionID
+	if sessID == "" {
+		s.mutex.Lock()
+		sessID = s.activeSessionID
+		s.mutex.Unlock()
+	}
+	if sessID != "" {
+		args = append(args, "--resume="+sessID)
 	}
 
 	// File attachments
@@ -383,9 +410,54 @@ func (s *Service) ExecuteAgent(opts AgentRunOptions) error {
 			line := scanner.Text()
 			trimmed := strings.TrimSpace(line)
 
-			// Completely filter out any JSON telemetry/metadata
+			// Check if this line is JSON from omp
 			if strings.HasPrefix(trimmed, "{") && strings.HasSuffix(trimmed, "}") {
-				continue
+				var frame map[string]interface{}
+				if jsonErr := json.Unmarshal([]byte(trimmed), &frame); jsonErr == nil {
+					fType, _ := frame["type"].(string)
+
+					// 1. Session initialization / announcement
+					if fType == "session" {
+						if newSessID, ok := frame["id"].(string); ok && newSessID != "" {
+							s.mutex.Lock()
+							s.activeSessionID = newSessID
+							s.mutex.Unlock()
+							if s.ctx != nil {
+								runtime.EventsEmit(s.ctx, "agent:session", map[string]interface{}{
+									"sessionId": newSessID,
+								})
+							}
+						}
+						continue
+					}
+
+					// 2. Streaming assistant message events
+					if fType == "message_update" {
+						if asstEvent, ok := frame["assistantMessageEvent"].(map[string]interface{}); ok {
+							eType, _ := asstEvent["type"].(string)
+							switch eType {
+							case "text_delta":
+								if delta, ok := asstEvent["delta"].(string); ok && delta != "" && s.ctx != nil {
+									runtime.EventsEmit(s.ctx, "agent:stream", map[string]interface{}{
+										"type":    "text",
+										"content": delta,
+									})
+								}
+							case "thinking_delta":
+								if delta, ok := asstEvent["delta"].(string); ok && delta != "" && s.ctx != nil {
+									runtime.EventsEmit(s.ctx, "agent:stream", map[string]interface{}{
+										"type":    "thinking",
+										"content": delta,
+									})
+								}
+							}
+						}
+						continue
+					}
+
+					// 3. Fallback or tool result / metadata events: omit raw telemetry from stdout
+					continue
+				}
 			}
 
 			// Route transient status to stderr
@@ -428,10 +500,15 @@ func (s *Service) ExecuteAgent(opts AgentRunOptions) error {
 		exitCode = cmd.ProcessState.ExitCode()
 	}
 
+	s.mutex.Lock()
+	currentSessID := s.activeSessionID
+	s.mutex.Unlock()
+
 	if s.ctx != nil {
 		runtime.EventsEmit(s.ctx, "agent:done", map[string]interface{}{
-			"exitCode": exitCode,
-			"success":  err == nil,
+			"exitCode":  exitCode,
+			"success":   err == nil,
+			"sessionId": currentSessID,
 		})
 	}
 

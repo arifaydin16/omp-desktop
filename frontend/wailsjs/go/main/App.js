@@ -14,6 +14,10 @@ export function CheckPathExists(arg1) {
   return window['go']['main']['App']['CheckPathExists'](arg1);
 }
 
+export function ClearActiveSession() {
+  return window['go']['main']['App']['ClearActiveSession']();
+}
+
 export function CountTokens(arg1) {
   return window['go']['main']['App']['CountTokens'](arg1);
 }
@@ -32,6 +36,10 @@ export function ExecuteAgent(arg1) {
 
 export function ExportSessionHTML(arg1) {
   return window['go']['main']['App']['ExportSessionHTML'](arg1);
+}
+
+export function GetActiveSessionID() {
+  return window['go']['main']['App']['GetActiveSessionID']();
 }
 
 export function GetAuthCredentials() {
@@ -188,6 +196,10 @@ export function SendLoginInput(arg1) {
 
 export function SendStdin(arg1) {
   return window['go']['main']['App']['SendStdin'](arg1);
+}
+
+export function SetActiveSessionID(arg1) {
+  return window['go']['main']['App']['SetActiveSessionID'](arg1);
 }
 
 export function SetAdvisorEnabled(arg1) {

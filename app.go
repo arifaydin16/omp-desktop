@@ -62,6 +62,21 @@ func (a *App) ExecuteAgent(opts omp.AgentRunOptions) error {
 	return a.ompService.ExecuteAgent(opts)
 }
 
+// ClearActiveSession resets the active session in backend
+func (a *App) ClearActiveSession() {
+	a.ompService.ClearActiveSession()
+}
+
+// SetActiveSessionID sets active session ID in backend
+func (a *App) SetActiveSessionID(id string) {
+	a.ompService.SetActiveSessionID(id)
+}
+
+// GetActiveSessionID returns active session ID in backend
+func (a *App) GetActiveSessionID() string {
+	return a.ompService.GetActiveSessionID()
+}
+
 // StopAgent terminates current running agent process
 func (a *App) StopAgent() error {
 	return a.ompService.StopAgent()

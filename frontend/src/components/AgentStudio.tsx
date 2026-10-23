@@ -11,6 +11,7 @@ import * as AppApi from '../../wailsjs/go/main/App';
 interface AgentStudioProps {
   profile?: string;
   messages: ChatMessage[];
+  sessionId?: string;
   isWorking: boolean;
   onSendMessage: (opts: AgentRunOptions) => void;
   onStopAgent: () => void;
@@ -36,6 +37,7 @@ interface AgentStudioProps {
 export const AgentStudio: React.FC<AgentStudioProps> = ({
   profile,
   messages,
+  sessionId,
   isWorking,
   onSendMessage,
   onStopAgent,
@@ -1294,9 +1296,9 @@ export const AgentStudio: React.FC<AgentStudioProps> = ({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    if (isWorking) return;
     const trimmed = prompt.trim();
     if (!trimmed && attachedFiles.length === 0) return;
-
     // Intercept all slash commands
     // 1. /clear & /new
     if (trimmed === '/clear' || trimmed === '/new') {
@@ -1477,7 +1479,7 @@ export const AgentStudio: React.FC<AgentStudioProps> = ({
       advisor,
       profile: '',
       cwd,
-      sessionId: '',
+      sessionId: sessionId || '',
       files: attachedFiles,
     });
 
@@ -1508,7 +1510,7 @@ export const AgentStudio: React.FC<AgentStudioProps> = ({
       advisor,
       profile: '',
       cwd,
-      sessionId: '',
+      sessionId: sessionId || '',
       files: [],
     });
   };
@@ -1644,7 +1646,9 @@ export const AgentStudio: React.FC<AgentStudioProps> = ({
 
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
-      handleSubmit(e);
+      if (!isWorking) {
+        handleSubmit(e);
+      }
     }
   };
 
@@ -1780,10 +1784,11 @@ export const AgentStudio: React.FC<AgentStudioProps> = ({
       </div>
 
       {/* Main Messages Area */}
-      <div className="flex-1 overflow-y-auto px-6 py-6 space-y-4">
-        {messages.length === 0 ? (
-          /* Swiss Poster Welcome Screen */
-          <div className="h-full flex flex-col items-center justify-center text-center p-8 select-none">
+      <div className="flex-1 overflow-y-auto px-4 py-6 space-y-4 flex flex-col items-center">
+        <div className="w-full max-w-4xl space-y-4 flex-1 flex flex-col">
+          {messages.length === 0 ? (
+            /* Swiss Poster Welcome Screen */
+            <div className="h-full flex flex-col items-center justify-center text-center p-8 select-none">
             <div className="w-12 h-12 bg-omp-accent text-white flex items-center justify-center font-mono font-bold text-xl mb-4 shadow-sm rounded-[2px]">
               π
             </div>
@@ -1944,12 +1949,13 @@ export const AgentStudio: React.FC<AgentStudioProps> = ({
             );
           })
         )}
-        <div ref={messagesEndRef} />
+          <div ref={messagesEndRef} />
+        </div>
       </div>
 
       {/* Input Composer & Toolbar */}
-      <div className="border-t border-omp-border bg-omp-surface p-4 space-y-3 shrink-0">
-        {/* Context Size Progress Bar & Git Branch Info Bar right above the input */}
+      <div className="border-t border-omp-border bg-omp-surface p-4 shrink-0 flex flex-col items-center">
+        <div className="w-full max-w-4xl space-y-3">
         <div className="flex items-center justify-between px-1 text-xs select-none font-mono">
           {/* Left: Git Branch (if available) */}
           {/* Left: Git Branch & Mode Indicators (Goal, Loop) */}
@@ -2398,6 +2404,7 @@ export const AgentStudio: React.FC<AgentStudioProps> = ({
             </button>
           )}
         </form>
+        </div>
       </div>
 
       {/* Modal Dialog for Parameters & Roles */}

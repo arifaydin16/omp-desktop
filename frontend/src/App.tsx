@@ -18,6 +18,7 @@ export function App() {
   const [profile, setProfile] = useState('');
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [currentSessionId, setCurrentSessionId] = useState<string>('');
   const [attachedFiles, setAttachedFiles] = useState<string[]>([]);
   const [availableModels, setAvailableModels] = useState<ModelEntry[]>([]);
   const [selectedModel, setSelectedModel] = useState('google-antigravity/gemini-3.8-flash');
@@ -233,12 +234,23 @@ export function App() {
         });
       }
     });
+    const unsubSession = EventsOn('agent:session', (data: unknown) => {
+      if (data && typeof data === 'object') {
+        const obj = data as Record<string, unknown>;
+        if (typeof obj.sessionId === 'string' && obj.sessionId) {
+          setCurrentSessionId(obj.sessionId);
+        }
+      }
+    });
 
     const unsubDone = EventsOn('agent:done', (data: unknown) => {
       setIsWorking(false);
       if (data && typeof data === 'object') {
         const obj = data as Record<string, unknown>;
         const exitCode = typeof obj.exitCode === 'number' ? obj.exitCode : 0;
+        if (typeof obj.sessionId === 'string' && obj.sessionId) {
+          setCurrentSessionId(obj.sessionId);
+        }
         setMessages((prev) => {
           if (prev.length === 0) return prev;
           const last = prev[prev.length - 1];
@@ -273,6 +285,7 @@ export function App() {
       unsubStatus();
       unsubStream();
       unsubCommand();
+      unsubSession();
       unsubDone();
       unsubUpdateStatus();
     };
@@ -383,6 +396,10 @@ export function App() {
 
   const handleResumeSession = async (session: SessionSummary) => {
     setCwd(session.cwd || '');
+    setCurrentSessionId(session.id || '');
+    if (session.id) {
+      AppApi.SetActiveSessionID(session.id).catch(() => {});
+    }
     if (session.model) {
       setSelectedModel(session.model);
     }
@@ -438,6 +455,8 @@ export function App() {
   const handleNewSession = () => {
     setMessages([]);
     setAttachedFiles([]);
+    setCurrentSessionId('');
+    AppApi.ClearActiveSession().catch(() => {});
   };
   const handleToggleDrawer = (drawerName: string) => {
     setActiveDrawer((prev) => (prev === drawerName ? null : drawerName));
@@ -581,6 +600,7 @@ export function App() {
         <AgentStudio
           profile={profile}
           messages={messages}
+          sessionId={currentSessionId}
           isWorking={isWorking}
           onSendMessage={handleSendMessage}
           onStopAgent={handleStopAgent}
@@ -594,7 +614,11 @@ export function App() {
           availableModels={availableModels}
           selectedModel={selectedModel}
           onSelectModel={setSelectedModel}
-          onClearConsole={() => setMessages([])}
+          onClearConsole={() => {
+            setMessages([]);
+            setCurrentSessionId('');
+            AppApi.ClearActiveSession().catch(() => {});
+          }}
           onOpenUsage={() => setActiveDrawer('usage')}
           onOpenSkills={() => setActiveDrawer('skills')}
           onOpenSessions={() => setActiveDrawer('sessions')}
