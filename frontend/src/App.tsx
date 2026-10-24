@@ -7,7 +7,7 @@ import { SettingsDialog } from './components/SettingsDialog';
 import { SkillsDrawer } from './components/SkillsDrawer';
 import { UsageDialog } from './components/UsageDialog';
 import { WorkspaceSessionsSidebar } from './components/WorkspaceSessionsSidebar';
-import { ChatMessage, AgentRunOptions, SessionSummary, ModelEntry, UpdateStatus } from './types';
+import { ChatMessage, AgentRunOptions, SessionSummary, ModelEntry, UpdateStatus, ToolCall } from './types';
 import { splitThinkingAndResponse } from './utils/textParser';
 import * as AppApi from '../wailsjs/go/main/App';
 import { EventsOn } from '../wailsjs/runtime/runtime';
@@ -26,6 +26,7 @@ export function App() {
   const [isWorking, setIsWorking] = useState(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [theme, setTheme] = useState<string>(() => localStorage.getItem('omp_theme') || 'cyber-violet');
+  const [settingsTab, setSettingsTab] = useState<'general' | 'auth' | 'extra'>('general');
 
   // Synchronize dynamic theme to document element
   useEffect(() => {
@@ -243,6 +244,142 @@ export function App() {
       }
     });
 
+    const unsubToolStart = EventsOn('agent:tool_start', (data: unknown) => {
+      if (!data || typeof data !== 'object') return;
+      const obj = data as Record<string, unknown>;
+      const callId = String(obj.toolCallId || 'tc_' + Math.random().toString(36).slice(2));
+      const toolName = String(obj.toolName || 'tool');
+      const intent = typeof obj.intent === 'string' ? obj.intent : undefined;
+      const args = (obj.args as Record<string, unknown> | string) || undefined;
+
+      setMessages((prev) => {
+        if (prev.length === 0) return prev;
+        const last = prev[prev.length - 1];
+        if (last.role === 'assistant') {
+          const currentCalls = last.toolCalls || [];
+          const existingIdx = currentCalls.findIndex((c) => c.id === callId);
+          let updatedCalls: ToolCall[];
+          if (existingIdx >= 0) {
+            updatedCalls = [...currentCalls];
+            updatedCalls[existingIdx] = {
+              ...updatedCalls[existingIdx],
+              tool: toolName,
+              intent: intent || updatedCalls[existingIdx].intent,
+              args: args || updatedCalls[existingIdx].args,
+              status: 'running',
+            };
+          } else {
+            updatedCalls = [
+              ...currentCalls,
+              {
+                id: callId,
+                tool: toolName,
+                intent,
+                args,
+                status: 'running',
+              },
+            ];
+          }
+          return [
+            ...prev.slice(0, -1),
+            {
+              ...last,
+              toolCalls: updatedCalls,
+            },
+          ];
+        }
+        return prev;
+      });
+    });
+
+    const unsubToolUpdate = EventsOn('agent:tool_update', (data: unknown) => {
+      if (!data || typeof data !== 'object') return;
+      const obj = data as Record<string, unknown>;
+      const callId = String(obj.toolCallId || '');
+      if (!callId) return;
+
+      const partial = obj.partialResult as Record<string, unknown> | undefined;
+      let resultText = '';
+      if (partial && Array.isArray(partial.content)) {
+        for (const item of partial.content) {
+          if (item && typeof item === 'object' && 'text' in item) {
+            resultText += String(item.text || '');
+          }
+        }
+      }
+      const details = (partial?.details as Record<string, unknown>) || (obj.details as Record<string, unknown>) || undefined;
+
+      setMessages((prev) => {
+        if (prev.length === 0) return prev;
+        const last = prev[prev.length - 1];
+        if (last.role === 'assistant' && last.toolCalls) {
+          const updated = last.toolCalls.map((tc) => {
+            if (tc.id === callId) {
+              return {
+                ...tc,
+                result: resultText || tc.result,
+                details: details || tc.details,
+              };
+            }
+            return tc;
+          });
+          return [
+            ...prev.slice(0, -1),
+            {
+              ...last,
+              toolCalls: updated,
+            },
+          ];
+        }
+        return prev;
+      });
+    });
+
+    const unsubToolEnd = EventsOn('agent:tool_end', (data: unknown) => {
+      if (!data || typeof data !== 'object') return;
+      const obj = data as Record<string, unknown>;
+      const callId = String(obj.toolCallId || '');
+      if (!callId) return;
+
+      const isError = Boolean(obj.isError);
+      const res = obj.result as Record<string, unknown> | undefined;
+      let resultText = '';
+      if (res && Array.isArray(res.content)) {
+        for (const item of res.content) {
+          if (item && typeof item === 'object' && 'text' in item) {
+            resultText += String(item.text || '');
+          }
+        }
+      }
+      const details = (res?.details as Record<string, unknown>) || (obj.details as Record<string, unknown>) || undefined;
+
+      setMessages((prev) => {
+        if (prev.length === 0) return prev;
+        const last = prev[prev.length - 1];
+        if (last.role === 'assistant' && last.toolCalls) {
+          const updated = last.toolCalls.map((tc) => {
+            if (tc.id === callId) {
+              return {
+                ...tc,
+                result: resultText || tc.result,
+                details: details || tc.details,
+                isError,
+                status: 'completed' as const,
+              };
+            }
+            return tc;
+          });
+          return [
+            ...prev.slice(0, -1),
+            {
+              ...last,
+              toolCalls: updated,
+            },
+          ];
+        }
+        return prev;
+      });
+    });
     const unsubDone = EventsOn('agent:done', (data: unknown) => {
       setIsWorking(false);
       if (data && typeof data === 'object') {
@@ -286,6 +423,9 @@ export function App() {
       unsubStream();
       unsubCommand();
       unsubSession();
+      unsubToolStart();
+      unsubToolUpdate();
+      unsubToolEnd();
       unsubDone();
       unsubUpdateStatus();
     };
@@ -318,6 +458,10 @@ export function App() {
   };
   const handleAddFile = useCallback((path: string) => {
     setAttachedFiles((prev) => (prev.includes(path) ? prev : [...prev, path]));
+  }, []);
+
+  const handleAddSystemMessage = useCallback((msg: ChatMessage) => {
+    setMessages((prev) => [...prev, msg]);
   }, []);
 
 
@@ -622,7 +766,11 @@ export function App() {
           onOpenUsage={() => setActiveDrawer('usage')}
           onOpenSkills={() => setActiveDrawer('skills')}
           onOpenSessions={() => setActiveDrawer('sessions')}
-          onOpenSettings={() => setActiveDrawer('settings')}
+          onOpenSettings={(tab?: 'general' | 'auth' | 'extra') => {
+            if (tab) setSettingsTab(tab);
+            setActiveDrawer('settings');
+          }}
+          onAddSystemMessage={handleAddSystemMessage}
           onOpenDevTools={() => setActiveDrawer('devtools')}
         />
 
@@ -642,6 +790,7 @@ export function App() {
           isOpen={activeDrawer === 'settings'}
           onClose={() => setActiveDrawer(null)}
           profile={profile}
+          initialTab={settingsTab}
         />
 
         <SkillsDrawer

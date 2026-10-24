@@ -146,6 +146,10 @@ export function ReadSkillContent(arg1) {
   return window['go']['main']['App']['ReadSkillContent'](arg1);
 }
 
+export function ReadWorkspaceFile(arg1) {
+  return window['go']['main']['App']['ReadWorkspaceFile'](arg1);
+}
+
 export function RefreshModels() {
   return window['go']['main']['App']['RefreshModels']();
 }
@@ -164,6 +168,10 @@ export function RunGitDiff(arg1) {
 
 export function RunGitStatus(arg1) {
   return window['go']['main']['App']['RunGitStatus'](arg1);
+}
+
+export function RunOmpCliCommand(arg1, arg2, arg3) {
+  return window['go']['main']['App']['RunOmpCliCommand'](arg1, arg2, arg3);
 }
 
 export function SaveApiKeyCredential(arg1, arg2) {
@@ -224,4 +232,8 @@ export function StartLogin(arg1, arg2) {
 
 export function StopAgent() {
   return window['go']['main']['App']['StopAgent']();
+}
+
+export function WriteWorkspaceFile(arg1, arg2) {
+  return window['go']['main']['App']['WriteWorkspaceFile'](arg1, arg2);
 }

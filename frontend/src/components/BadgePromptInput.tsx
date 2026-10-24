@@ -18,18 +18,18 @@ const BADGE_PALETTES = [
   { border: 'border-rose-400/70', text: 'text-rose-300', bg: 'bg-rose-400/20' },
 ];
 
-// Regex matching image tokens [#N], bracketed commands [/cmd], or leading slash commands
-const TOKEN_SPLIT_REGEX = /(\[#\d+\]|\[\/(?:[a-zA-Z0-9_:-]+)\]|^\/(?:skill:[a-zA-Z0-9_-]+|[a-zA-Z0-9_-]+(?::[a-zA-Z0-9_:-]+)?)(?:\s|$))/;
+// Regex matching image tokens [#N], file tokens [@path], bracketed commands [/cmd], or leading slash commands followed by space
+const TOKEN_SPLIT_REGEX = /(\[#\d+\]|\[@[^\]\s]+\]|@(?:[a-zA-Z0-9_\-\./\\]+\.[a-zA-Z0-9_-]+|[a-zA-Z0-9_\-\./\\]+\/)|\[\/(?:[a-zA-Z0-9_:-]+)\]|^\/(?:skill:[a-zA-Z0-9_-]+|[a-zA-Z0-9_-]+(?::[a-zA-Z0-9_:-]+)?)\s+)/;
 
 /**
  * Extracts plain text from the contentEditable element, serializing
- * atomic image badge elements back to [#N] and command badges back to /command.
+ * atomic image badge elements back to [#N], file badges back to @path, and command badges back to /command.
  */
 function extractSerializedText(container: HTMLElement): string {
   let result = '';
   container.childNodes.forEach((node) => {
     if (node.nodeType === Node.TEXT_NODE) {
-      let text = node.textContent || '';
+      let text = (node.textContent || '').replace(/\u00A0/g, ' ');
       // Avoid duplicate leading space after a command badge
       if (result.endsWith(' ') && text.startsWith(' ')) {
         text = text.trimStart();
@@ -39,6 +39,11 @@ function extractSerializedText(container: HTMLElement): string {
       const el = node as HTMLElement;
       if (el.dataset.badge) {
         result += `[${el.dataset.badge}]`;
+      } else if (el.dataset.file) {
+        if (result && !result.endsWith(' ') && !result.endsWith('\n')) {
+          result += ' ';
+        }
+        result += `@${el.dataset.file} `;
       } else if (el.dataset.command) {
         if (result && !result.endsWith(' ') && !result.endsWith('\n')) {
           result += ' ';
@@ -91,9 +96,16 @@ function createCommandBadgeElement(commandText: string, onRemove?: () => void): 
     : cleanCmd.startsWith('/model')
     ? { border: 'border-blue-400/60', text: 'text-blue-300', bg: 'bg-blue-950/70', glyph: '⬡' }
     : cleanCmd.startsWith('/usage') || cleanCmd.startsWith('/stats')
-    ? { border: 'border-amber-400/60', text: 'text-amber-300', bg: 'bg-amber-950/70', glyph: '⚡' }
-    : { border: 'border-omp-accent/60', text: 'text-white', bg: 'bg-omp-accent/20', glyph: '/' };
-
+    ? { border: 'border-amber-400/60', text: 'text-amber-300', bg: 'bg-amber-950/70', glyph: '📊' }
+    : cleanCmd.startsWith('/record')
+    ? { border: 'border-rose-400/60', text: 'text-rose-300', bg: 'bg-rose-950/70', glyph: '⏺' }
+    : cleanCmd.startsWith('/todo')
+    ? { border: 'border-emerald-400/60', text: 'text-emerald-300', bg: 'bg-emerald-950/70', glyph: '✓' }
+    : cleanCmd.startsWith('/mcp')
+    ? { border: 'border-amber-400/60', text: 'text-amber-300', bg: 'bg-amber-950/70', glyph: '🔌' }
+    : cleanCmd.startsWith('/marketplace') || cleanCmd.startsWith('/plugin')
+    ? { border: 'border-emerald-400/60', text: 'text-emerald-300', bg: 'bg-emerald-950/70', glyph: '🛒' }
+    : { border: 'border-omp-accent/60', text: 'text-white', bg: 'bg-omp-accent/20', glyph: '⌘' };
   span.className = `inline-flex items-center space-x-1 px-2 py-0.5 rounded-[2px] text-xs font-mono font-bold border ${palette.border} ${palette.bg} ${palette.text} select-none mr-1.5 align-baseline cursor-default shadow-sm`;
 
   const glyphSpan = document.createElement('span');
@@ -108,6 +120,40 @@ function createCommandBadgeElement(commandText: string, onRemove?: () => void): 
   const removeBtn = document.createElement('span');
   removeBtn.className = 'ml-1 opacity-60 hover:opacity-100 hover:text-red-400 cursor-pointer font-sans text-[11px] leading-none transition';
   removeBtn.title = 'Komutu kaldır';
+  removeBtn.textContent = '✕';
+  removeBtn.onmousedown = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (onRemove) onRemove();
+  };
+  span.appendChild(removeBtn);
+
+  return span;
+}
+
+/**
+ * Creates an atomic non-editable file badge element (e.g. @test.txt)
+ */
+function createFileBadgeElement(filePath: string, onRemove?: () => void): HTMLSpanElement {
+  const span = document.createElement('span');
+  span.contentEditable = 'false';
+  const cleanPath = filePath.replace(/^[\[@\s]+|[\]\s]+$/g, '').trim();
+  span.dataset.file = cleanPath; // e.g. "test.txt"
+
+  span.className = 'inline-flex items-center space-x-1 px-2 py-0.5 rounded-[2px] text-xs font-mono font-bold border border-[#38bdf8]/60 bg-[#0284c7]/20 text-[#38bdf8] select-none mx-1 align-baseline cursor-default shadow-sm transition hover:brightness-110';
+
+  const glyphSpan = document.createElement('span');
+  glyphSpan.className = 'opacity-90 text-[11px]';
+  glyphSpan.textContent = '📄';
+  span.appendChild(glyphSpan);
+
+  const textSpan = document.createElement('span');
+  textSpan.textContent = '@' + cleanPath;
+  span.appendChild(textSpan);
+
+  const removeBtn = document.createElement('span');
+  removeBtn.className = 'ml-1 opacity-60 hover:opacity-100 hover:text-red-400 cursor-pointer font-sans text-[11px] leading-none transition';
+  removeBtn.title = 'Dosyayı kaldır';
   removeBtn.textContent = '✕';
   removeBtn.onmousedown = (e) => {
     e.preventDefault();
@@ -166,16 +212,25 @@ export const BadgePromptInput: React.FC<BadgePromptInputProps> = ({
       return;
     }
 
-    // Split value by image tokens [#N] or command tokens
+    // Split value by image tokens [#N], file tokens [@path], or command tokens
     const parts = value.split(TOKEN_SPLIT_REGEX);
     parts.forEach((part) => {
       if (!part) return;
 
       const imageMatch = part.match(/^\[(#[0-9]+)\]$/);
+      const isFile = part.match(/^\[?@([a-zA-Z0-9_\-\./\\]+\.[a-zA-Z0-9_-]+|[a-zA-Z0-9_\-\./\\]+\/)\]?(?:\s|$)/);
       const isCommand = part.match(/^\[?\/(?:skill:[a-zA-Z0-9_-]+|[a-zA-Z0-9_-]+(?::[a-zA-Z0-9_:-]+)?)\]?(?:\s|$)/);
 
       if (imageMatch) {
         const badge = createImageBadgeElement(imageMatch[1]);
+        el.appendChild(badge);
+        el.appendChild(document.createTextNode('\u00A0'));
+      } else if (isFile) {
+        const cleanPath = isFile[1].trim();
+        const badge = createFileBadgeElement(cleanPath, () => {
+          const updated = value.replace(part, '').trimStart();
+          onChange(updated);
+        });
         el.appendChild(badge);
         el.appendChild(document.createTextNode('\u00A0'));
       } else if (isCommand) {
@@ -191,7 +246,6 @@ export const BadgePromptInput: React.FC<BadgePromptInputProps> = ({
         el.appendChild(document.createTextNode(part));
       }
     });
-
     setCaretToEnd(el);
   }, [value, onChange]);
 

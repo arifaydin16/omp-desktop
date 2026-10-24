@@ -7,6 +7,7 @@ export interface SettingsDialogProps {
   isOpen: boolean;
   onClose: () => void;
   profile?: string;
+  initialTab?: 'general' | 'auth' | 'extra';
 }
 
 interface ConfigItem {
@@ -282,6 +283,7 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({
   isOpen,
   onClose,
   profile,
+  initialTab,
 }) => {
   const [configMap, setConfigMap] = useState<Record<string, unknown>>({});
   const [allConfigItems, setAllConfigItems] = useState<ConfigItem[]>([]);
@@ -293,6 +295,12 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({
   const [activeTab, setActiveTab] = useState<'general' | 'auth' | 'extra'>('general');
   const [showBrokerToken, setShowBrokerToken] = useState(false);
 
+
+  useEffect(() => {
+    if (isOpen && initialTab) {
+      setActiveTab(initialTab);
+    }
+  }, [isOpen, initialTab]);
   // Extra options state
   const [extraSearch, setExtraSearch] = useState('');
   const [editingExtraKey, setEditingExtraKey] = useState<string | null>(null);

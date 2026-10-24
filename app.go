@@ -182,6 +182,16 @@ func (a *App) ReadSkillContent(filePath string) (string, error) {
 	return a.ompService.ReadSkillContent(filePath)
 }
 
+// ReadWorkspaceFile reads a file from disk
+func (a *App) ReadWorkspaceFile(filePath string) (string, error) {
+	return a.ompService.ReadWorkspaceFile(filePath)
+}
+
+// WriteWorkspaceFile writes content to a file on disk
+func (a *App) WriteWorkspaceFile(filePath string, content string) error {
+	return a.ompService.WriteWorkspaceFile(filePath, content)
+}
+
 // SaveCustomSkill creates or updates a custom skill
 func (a *App) SaveCustomSkill(name, description, content string, isGlobal bool) error {
 	return a.ompService.SaveCustomSkill(name, description, content, isGlobal)
@@ -384,4 +394,9 @@ func (a *App) OpenBrowserURL(url string) error {
 // GetChangelog reads and returns changelog entries
 func (a *App) GetChangelog(args string) (string, error) {
 	return a.ompService.GetChangelog(args)
+}
+
+// RunOmpCliCommand executes an omp CLI command and returns structured result
+func (a *App) RunOmpCliCommand(subcommand string, args []string, cwd string) (*omp.CliCommandResult, error) {
+	return a.ompService.RunOmpCliCommand(subcommand, args, cwd)
 }

@@ -122,6 +122,14 @@ type LoginEvent struct {
 	Message   string `json:"message,omitempty"`
 }
 
+// CliCommandResult represents the output and status of an executed CLI command
+type CliCommandResult struct {
+	Command  string `json:"command"`
+	Output   string `json:"output"`
+	ExitCode int    `json:"exitCode"`
+	Error    string `json:"error,omitempty"`
+}
+
 // Service is the main bridge for omp CLI, RPC and file management
 type Service struct {
 	ctx            context.Context
@@ -343,10 +351,28 @@ func (s *Service) ExecuteAgent(opts AgentRunOptions) error {
 		args = append(args, "--resume="+sessID)
 	}
 
-	// File attachments
+	// File attachments - resolve relative to opts.Cwd or absolute path
+	effectiveCwd := opts.Cwd
+	if effectiveCwd == "" {
+		effectiveCwd, _ = os.Getwd()
+	}
 	for _, f := range opts.Files {
-		if strings.TrimSpace(f) != "" {
-			args = append(args, "@"+strings.TrimSpace(f))
+		cleanF := strings.TrimSpace(f)
+		cleanF = strings.TrimPrefix(cleanF, "@")
+		if cleanF != "" {
+			var resolved string
+			if filepath.IsAbs(cleanF) {
+				resolved = cleanF
+			} else {
+				resolved = filepath.Join(effectiveCwd, cleanF)
+			}
+
+			// If file exists on disk, attach it with full path so omp always finds it
+			if _, err := os.Stat(resolved); err == nil {
+				args = append(args, "@"+resolved)
+			} else if _, err := os.Stat(cleanF); err == nil {
+				args = append(args, "@"+cleanF)
+			}
 		}
 	}
 
@@ -454,8 +480,27 @@ func (s *Service) ExecuteAgent(opts AgentRunOptions) error {
 						}
 						continue
 					}
+					// 3. Tool execution lifecycle events
+					if fType == "tool_execution_start" {
+						if s.ctx != nil {
+							runtime.EventsEmit(s.ctx, "agent:tool_start", frame)
+						}
+						continue
+					}
+					if fType == "tool_execution_update" {
+						if s.ctx != nil {
+							runtime.EventsEmit(s.ctx, "agent:tool_update", frame)
+						}
+						continue
+					}
+					if fType == "tool_execution_end" {
+						if s.ctx != nil {
+							runtime.EventsEmit(s.ctx, "agent:tool_end", frame)
+						}
+						continue
+					}
 
-					// 3. Fallback or tool result / metadata events: omit raw telemetry from stdout
+					// 4. Fallback or tool result / metadata events: omit raw telemetry from stdout
 					continue
 				}
 			}
@@ -840,6 +885,31 @@ func (s *Service) ReadSkillContent(filePath string) (string, error) {
 		return "", err
 	}
 	return string(data), nil
+}
+
+// ReadWorkspaceFile reads a file from disk given an absolute or workspace path
+func (s *Service) ReadWorkspaceFile(filePath string) (string, error) {
+	if strings.TrimSpace(filePath) == "" {
+		return "", fmt.Errorf("file path cannot be empty")
+	}
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
+}
+
+// WriteWorkspaceFile writes content to a file on disk
+func (s *Service) WriteWorkspaceFile(filePath string, content string) error {
+	trimmed := strings.TrimSpace(filePath)
+	if trimmed == "" {
+		return fmt.Errorf("file path cannot be empty")
+	}
+	dir := filepath.Dir(trimmed)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return err
+	}
+	return os.WriteFile(trimmed, []byte(content), 0644)
 }
 
 // SaveCustomSkill creates or updates a custom skill in ~/.agents/skills/<name>/SKILL.md
@@ -1719,4 +1789,61 @@ func (s *Service) GetChangelog(args string) (string, error) {
 	}
 
 	return sb.String(), nil
+}
+
+// RunOmpCliCommand executes an arbitrary omp CLI command or subcommand safely
+func (s *Service) RunOmpCliCommand(subcommand string, args []string, cwd string) (*CliCommandResult, error) {
+	effectiveCwd := cwd
+	if effectiveCwd == "" {
+		effectiveCwd, _ = os.Getwd()
+	}
+
+	var cmdArgs []string
+	sub := strings.TrimSpace(subcommand)
+
+	// Inject active profile if needed
+	s.mutex.Lock()
+	prof := s.currentProfile
+	s.mutex.Unlock()
+
+	if prof != "" && prof != "default" {
+		cmdArgs = append(cmdArgs, "--profile="+prof)
+	}
+
+	if sub != "" {
+		cmdArgs = append(cmdArgs, sub)
+	}
+	for _, a := range args {
+		trimmed := strings.TrimSpace(a)
+		if trimmed != "" {
+			cmdArgs = append(cmdArgs, trimmed)
+		}
+	}
+
+	cmd := prepareCmd(exec.Command(s.ompBin, cmdArgs...))
+	if effectiveCwd != "" {
+		cmd.Dir = effectiveCwd
+	}
+	cmd.Stdin = strings.NewReader("")
+
+	fullCmd := fmt.Sprintf("omp %s", strings.Join(cmdArgs, " "))
+	out, err := cmd.CombinedOutput()
+
+	exitCode := 0
+	errMsg := ""
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			exitCode = exitErr.ExitCode()
+		} else {
+			exitCode = 1
+		}
+		errMsg = err.Error()
+	}
+
+	return &CliCommandResult{
+		Command:  fullCmd,
+		Output:   string(out),
+		ExitCode: exitCode,
+		Error:    errMsg,
+	}, nil
 }

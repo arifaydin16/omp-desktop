@@ -1,12 +1,73 @@
-import React, { useState, useRef, useEffect, useMemo } from 'react';
+import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { Rune } from './Rune';
-import { ChatMessage, AgentRunOptions, ModelEntry, WorkspaceFileItem } from '../types';
+import { ChatMessage, AgentRunOptions, ModelEntry, WorkspaceFileItem, ToolCall } from '../types';
 import { splitThinkingAndResponse } from '../utils/textParser';
 import { ParametersDialog } from './ParametersDialog';
 import { RoleAssignmentModal } from './RoleAssignmentModal';
 import { BadgePromptInput } from './BadgePromptInput';
 import { ChangelogModal } from './ChangelogModal';
+import { MarkdownRenderer } from './MarkdownRenderer';
 import * as AppApi from '../../wailsjs/go/main/App';
+
+interface TodoTaskItem {
+  id: string;
+  content: string;
+  status: 'pending' | 'in_progress' | 'completed' | 'abandoned';
+}
+
+interface TodoPhaseItem {
+  id: string;
+  name: string;
+  tasks: TodoTaskItem[];
+}
+
+function phasesToMarkdown(phases: TodoPhaseItem[]): string {
+  if (phases.length === 0) return '';
+  const lines: string[] = ['# TODOs', ''];
+  phases.forEach((phase) => {
+    lines.push(`## ${phase.name}`);
+    phase.tasks.forEach((t) => {
+      const mark = t.status === 'completed' ? 'x' : t.status === 'in_progress' ? '/' : t.status === 'abandoned' ? '-' : ' ';
+      lines.push(`- [${mark}] ${t.content}`);
+    });
+    lines.push('');
+  });
+  return lines.join('\n').trim();
+}
+
+function markdownToPhases(md: string): TodoPhaseItem[] {
+  const phases: TodoPhaseItem[] = [];
+  let currentPhase: TodoPhaseItem = { id: 'phase_1', name: 'Görevler', tasks: [] };
+  const lines = md.split('\n');
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (trimmed.startsWith('## ') || trimmed.startsWith('# ')) {
+      const name = trimmed.replace(/^#+\s*/, '').trim();
+      if (name.toLowerCase() !== 'todos') {
+        currentPhase = { id: `phase_${Date.now()}_${phases.length}`, name, tasks: [] };
+        phases.push(currentPhase);
+      }
+      continue;
+    }
+    const taskMatch = trimmed.match(/^-\s*\[([ xX/\-~])\]\s*(.*)$/);
+    if (taskMatch) {
+      const mark = taskMatch[1].toLowerCase();
+      const content = taskMatch[2].trim();
+      if (content) {
+        const status: TodoTaskItem['status'] = mark === 'x' ? 'completed' : mark === '/' || mark === '~' ? 'in_progress' : mark === '-' ? 'abandoned' : 'pending';
+        if (phases.length === 0) {
+          phases.push(currentPhase);
+        }
+        currentPhase.tasks.push({
+          id: `task_${Date.now()}_${Math.random()}`,
+          content,
+          status,
+        });
+      }
+    }
+  }
+  return phases.length > 0 ? phases : (currentPhase.tasks.length > 0 ? [currentPhase] : []);
+}
 
 interface AgentStudioProps {
   profile?: string;
@@ -30,8 +91,9 @@ interface AgentStudioProps {
   onOpenUsage?: () => void;
   onOpenSkills?: () => void;
   onOpenSessions?: () => void;
-  onOpenSettings?: () => void;
+  onOpenSettings?: (tab?: 'general' | 'auth' | 'extra') => void;
   onOpenDevTools?: () => void;
+  onAddSystemMessage?: (msg: ChatMessage) => void;
 }
 
 export const AgentStudio: React.FC<AgentStudioProps> = ({
@@ -57,13 +119,36 @@ export const AgentStudio: React.FC<AgentStudioProps> = ({
   onOpenSessions,
   onOpenSettings,
   onOpenDevTools,
+  onAddSystemMessage,
 }) => {
   const [prompt, setPrompt] = useState('');
   const [showHelpModal, setShowHelpModal] = useState(false);
   const [helpModalTab, setHelpModalTab] = useState<'commands' | 'hotkeys'>('commands');
   const [collapsedThinking, setCollapsedThinking] = useState<Record<string, boolean>>({});
   const [copiedCodeBlockId, setCopiedCodeBlockId] = useState<string | null>(null);
+  const [isRecording, setIsRecording] = useState(false);
+  const [todoPhases, setTodoPhases] = useState<TodoPhaseItem[]>(() => {
+    try {
+      const stored = localStorage.getItem(`omp_todos_${sessionId || 'default'}`);
+      if (stored) return JSON.parse(stored);
+    } catch {
+      // ignore
+    }
+    return [];
+  });
 
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem(`omp_todos_${sessionId || 'default'}`);
+      if (stored) {
+        setTodoPhases(JSON.parse(stored));
+      } else {
+        setTodoPhases([]);
+      }
+    } catch {
+      setTodoPhases([]);
+    }
+  }, [sessionId]);
   const toggleThinkingCollapse = (id: string) => {
     setCollapsedThinking((prev) => ({
       ...prev,
@@ -386,6 +471,12 @@ export const AgentStudio: React.FC<AgentStudioProps> = ({
     setSelectedCmdIndex(0);
   }, [prompt]);
 
+  interface CommandSubcommand {
+    name: string;
+    description: string;
+    usage?: string;
+  }
+
   interface CommandItem {
     id: string;
     name: string;
@@ -393,11 +484,56 @@ export const AgentStudio: React.FC<AgentStudioProps> = ({
     glyph: string;
     glyphColor: string;
     description: string;
+    category?: 'modes' | 'models' | 'tasks' | 'compaction' | 'session' | 'remote' | 'tools' | 'telemetry';
+    subcommands?: CommandSubcommand[];
     onSelect?: () => void;
   }
 
+  const CLI_COMMAND_LOOKUP: Record<string, true> = {
+    // Note: 'todo' is handled natively as in-session task manager, NOT via omp.exe
+    mcp: true,
+    toks: true,
+    token: true,
+    gc: true,
+    commit: true,
+    cleanse: true,
+    anonymize: true,
+    find: true,
+    grep: true,
+    search: true,
+    ttsr: true,
+    grievances: true,
+    'tiny-models': true,
+    'dry-balance': true,
+    gallery: true,
+    say: true,
+    play: true,
+    clip: true,
+    read: true,
+    compress: true,
+    bench: true,
+    'if-bench': true,
+    ssh: true,
+    session: true,
+    marketplace: true,
+    plugins: true,
+    plugin: true,
+    ps: true,
+    jobs: true,
+    'browser-relay': true,
+    agents: true,
+    worktree: true,
+    wt: true,
+    git: true,
+    config: true,
+    images: true,
+    predict: true,
+    stream: true,
+    share: true,
+    install: true,
+  };
   const baseCommands: CommandItem[] = useMemo(() => [
-    // Skills & Custom Skills
+    // 1. Skills & Custom Skills
     {
       id: 'skill',
       name: 'skill:',
@@ -405,16 +541,65 @@ export const AgentStudio: React.FC<AgentStudioProps> = ({
       glyph: '✦',
       glyphColor: 'text-cyan-400 font-bold',
       description: `${skillsList.length || 31} yerleşik ve özel beceri kütüphanesi`,
+      category: 'tools',
+    },
+    {
+      id: 'skills',
+      name: 'skills',
+      fullCmd: '/skills',
+      glyph: '✦',
+      glyphColor: 'text-cyan-400 font-bold',
+      description: 'Beceriler kütüphanesini ve özel beceri yöneticisini açar (/skills search|install)',
+      category: 'tools',
+      subcommands: [
+        { name: 'search', description: 'Kayıt defterinde beceri ara', usage: '<sorgu>' },
+        { name: 'install', description: 'Kayıt defterinden beceri yükle', usage: '<@scope/name> [--global]' },
+        { name: 'installed', description: 'Yüklü becerileri listele' },
+        { name: 'update', description: 'Becerileri en son sürüme güncelle' },
+      ],
     },
 
-    // Modes & Autonomous Objectives
+    // 2. Task Management (Todo List)
+    {
+      id: 'todo',
+      name: 'todo',
+      fullCmd: '/todo',
+      glyph: '☑',
+      glyphColor: 'text-emerald-400 font-bold',
+      description: 'Ajan yapılacaklar listesini görüntüler ve yönetir (/todo append|start|done|export)',
+      category: 'tasks',
+      subcommands: [
+        { name: 'append', description: 'Yeni bir görev ekle', usage: '[<faz>] <görev...>' },
+        { name: 'start', description: 'Görevi devam ediyor olarak işaretle', usage: '<görev>' },
+        { name: 'done', description: 'Görevi veya fazı tamamlandı olarak işaretle', usage: '[<görev|faz>]' },
+        { name: 'drop', description: 'Görevi terk edildi olarak işaretle', usage: '[<görev|faz>]' },
+        { name: 'rm', description: 'Görevi veya fazı listeden kaldır', usage: '[<görev|faz>]' },
+        { name: 'edit', description: 'Todo listesini metin düzenleyicide aç' },
+        { name: 'copy', description: 'Todo listesini Markdown olarak panoya kopyala' },
+        { name: 'expand', description: 'Tüm faz ve görevleri genişletilmiş göster' },
+        { name: 'collapse', description: 'Kompakt önizleme görünümüne dön' },
+        { name: 'export', description: 'Görevleri TODO.md dosyasına aktar', usage: '[<yol>]' },
+        { name: 'import', description: 'Görevleri TODO.md dosyasından içe aktar', usage: '[<yol>]' },
+      ],
+    },
+
+    // 3. Modes & Autonomous Objectives
     {
       id: 'goal',
       name: 'goal',
       fullCmd: '/goal',
       glyph: '🎯',
       glyphColor: 'text-amber-400 font-bold',
-      description: `Hedef Modu: ${goalMode ? 'Açık' : 'Kapalı'} (/goal [set|show|pause|resume|drop|budget])`,
+      description: `Hedef Modu: ${goalMode ? 'Açık' : 'Kapalı'} (/goal set|show|pause|resume|drop|budget)`,
+      category: 'modes',
+      subcommands: [
+        { name: 'set', description: 'Yeni bir hedef belirle veya değiştir', usage: '<hedef>' },
+        { name: 'show', description: 'Mevcut hedef ayrıntılarını görüntüle' },
+        { name: 'pause', description: 'Aktif hedefi geçici olarak duraklat' },
+        { name: 'resume', description: 'Duraklatılan hedefi devam ettir' },
+        { name: 'drop', description: 'Aktif hedefi sonlandır' },
+        { name: 'budget', description: 'Hedef token bütçesini ayarla', usage: '<N|off>' },
+      ],
     },
     {
       id: 'guided-goal',
@@ -423,6 +608,7 @@ export const AgentStudio: React.FC<AgentStudioProps> = ({
       glyph: '🧭',
       glyphColor: 'text-amber-400',
       description: 'Ajan sohbetle mülakat yaparak hedef modunu yapılandırır (/guided-goal [hedef])',
+      category: 'modes',
     },
     {
       id: 'loop',
@@ -431,6 +617,11 @@ export const AgentStudio: React.FC<AgentStudioProps> = ({
       glyph: '↺',
       glyphColor: 'text-emerald-400 font-bold',
       description: `Döngü Modu: ${loopMode ? 'Açık' : 'Kapalı'} (/loop [adet|süre] [--while|--until '<cmd>'])`,
+      category: 'modes',
+      subcommands: [
+        { name: 'on', description: 'Döngü modunu etkinleştir' },
+        { name: 'off', description: 'Döngü modunu kapat' },
+      ],
     },
     {
       id: 'plan',
@@ -439,6 +630,7 @@ export const AgentStudio: React.FC<AgentStudioProps> = ({
       glyph: '📋',
       glyphColor: 'text-blue-400 font-bold',
       description: `Plan Modu: ${planYolo ? 'Açık' : 'Kapalı'} (Yürütmeden önce mimari planlama yapar)`,
+      category: 'modes',
     },
     {
       id: 'plan-review',
@@ -447,6 +639,7 @@ export const AgentStudio: React.FC<AgentStudioProps> = ({
       glyph: '🔍',
       glyphColor: 'text-blue-300',
       description: 'En son oluşturulan plan için plan inceleme arayüzünü yeniden açar',
+      category: 'modes',
     },
     {
       id: 'vibe',
@@ -455,6 +648,7 @@ export const AgentStudio: React.FC<AgentStudioProps> = ({
       glyph: '🌊',
       glyphColor: 'text-cyan-400',
       description: 'Vibe modu: Hızlı, doğrudan salt-okunur araç setiyle kalıcı oturum',
+      category: 'modes',
     },
     {
       id: 'security',
@@ -463,88 +657,20 @@ export const AgentStudio: React.FC<AgentStudioProps> = ({
       glyph: '🛡',
       glyphColor: 'text-rose-400 font-bold',
       description: 'OMP yerel güvenlik taramaları (/security plan|scan|status|scans|show|import)',
-    },
-
-    // Model & Reasoning Effort
-    {
-      id: 'model',
-      name: 'model',
-      fullCmd: '/model',
-      glyph: '⬡',
-      glyphColor: 'text-blue-400',
-      description: `Model Seçimi: ${selectedModel.split('/').pop() || 'gemini-3.8-flash'} (/model [isim])`,
-    },
-    {
-      id: 'switch',
-      name: 'switch',
-      fullCmd: '/switch',
-      glyph: '⇄',
-      glyphColor: 'text-indigo-400',
-      description: 'Yalnızca bu oturum için geçici model değiştirir (/switch [model])',
-    },
-    {
-      id: 'modelpreset',
-      name: 'modelpreset',
-      fullCmd: '/modelpreset',
-      glyph: '★',
-      glyphColor: 'text-amber-300',
-      description: 'Model rol ve düşünme profillerini kaydet ve yönet (/modelpreset list|save|switch|delete)',
-    },
-    {
-      id: 'effort',
-      name: 'effort',
-      fullCmd: '/effort',
-      glyph: '⚡',
-      glyphColor: 'text-amber-400',
-      description: `Düşünme Seviyesi: ${thinkingLevel} (/effort off|minimal|low|medium|high|max|auto)`,
-    },
-    {
-      id: 'fast',
-      name: 'fast',
-      fullCmd: '/fast',
-      glyph: '⚡',
-      glyphColor: 'text-amber-300 font-bold',
-      description: 'Hızlı servis katmanını aç/kapat (/fast on|ultra|off|status)',
-    },
-    {
-      id: 'slow',
-      name: 'slow',
-      fullCmd: '/slow',
-      glyph: '⏳',
-      glyphColor: 'text-blue-300',
-      description: 'Yavaş / flex servis katmanını aç/kapat (/slow on|off|status)',
-    },
-    {
-      id: 'extended-context',
-      name: 'extended-context',
-      fullCmd: '/extended-context',
-      glyph: '⤢',
-      glyphColor: 'text-purple-300',
-      description: 'Genişletilmiş bağlam pencerelerini aç/kapat (/extended-context on|off|status)',
-    },
-    {
-      id: 'computer',
-      name: 'computer',
-      fullCmd: '/computer',
-      glyph: '🖥',
-      glyphColor: 'text-zinc-300',
-      description: 'Masaüstü ve ekran etkileşim preludünü aç/kapat (/computer on|off|status)',
-    },
-    {
-      id: 'skillful',
-      name: 'skillful',
-      fullCmd: '/skillful',
-      glyph: '✦',
-      glyphColor: 'text-cyan-300',
-      description: 'Sistem promptunda becerilerin listelenmesini yönet (/skillful on|off|status)',
-    },
-    {
-      id: 'prewalk',
-      name: 'prewalk',
-      fullCmd: '/prewalk',
-      glyph: '🚶',
-      glyphColor: 'text-emerald-400',
-      description: 'Plan sonrası hafif modele tek seferlik geçiş handoffunu kur/iptal et (/prewalk restart|off)',
+      category: 'modes',
+      subcommands: [
+        { name: 'plan', description: 'Değiştirilemez güvenlik tarama planı oluştur' },
+        { name: 'scan', description: 'Güvenlik taramasını başlat' },
+        { name: 'status', description: 'Güvenlik taraması işlem durumunu göster' },
+        { name: 'cancel', description: 'Çalışan güvenlik taramasını iptal et' },
+        { name: 'scans', description: 'Proje güvenlik taramalarını listele' },
+        { name: 'show', description: 'Bir taramayı veya güvenlik kaynağını görüntüle' },
+        { name: 'import', description: 'SARIF veya Codex güvenlik paketini içe aktar' },
+        { name: 'export', description: 'Güvenlik raporu veya SARIF çıktısı al' },
+        { name: 'validate', description: 'Güvenlik bulgusunu yerel araçlarla doğrula' },
+        { name: 'compare', description: 'İki tarama arasındaki bulguları karşılaştır' },
+        { name: 'disposition', description: 'Bulguya karar ve gerekçe ata' },
+      ],
     },
     {
       id: 'ratchet',
@@ -553,6 +679,144 @@ export const AgentStudio: React.FC<AgentStudioProps> = ({
       glyph: '⚙',
       glyphColor: 'text-indigo-400',
       description: 'LLM akışları için eval oluştur ve hillclimbing çalıştır (/ratchet [hedef])',
+      category: 'modes',
+    },
+
+    // 4. Model & Reasoning Effort
+    {
+      id: 'model',
+      name: 'model',
+      fullCmd: '/model',
+      glyph: '⬡',
+      glyphColor: 'text-blue-400',
+      description: `Model Seçimi: ${selectedModel.split('/').pop() || 'gemini-3.8-flash'} (/model [isim])`,
+      category: 'models',
+    },
+    {
+      id: 'switch',
+      name: 'switch',
+      fullCmd: '/switch',
+      glyph: '⇄',
+      glyphColor: 'text-indigo-400',
+      description: 'Yalnızca bu oturum için geçici model değiştirir (/switch [model])',
+      category: 'models',
+    },
+    {
+      id: 'modelpreset',
+      name: 'modelpreset',
+      fullCmd: '/modelpreset',
+      glyph: '★',
+      glyphColor: 'text-amber-300',
+      description: 'Model rol ve düşünme profillerini kaydet ve yönet (/modelpreset list|save|switch|delete)',
+      category: 'models',
+      subcommands: [
+        { name: 'list', description: 'Kayıtlı model profillerini listele' },
+        { name: 'save', description: 'Aktif model rollerini ve düşünme seviyesini kaydet', usage: '<isim>' },
+        { name: 'switch', description: 'Kayıtlı bir profili uygula', usage: '<isim>' },
+        { name: 'delete', description: 'Kayıtlı bir profili sil', usage: '<isim>' },
+      ],
+    },
+    {
+      id: 'effort',
+      name: 'effort',
+      fullCmd: '/effort',
+      glyph: '⚡',
+      glyphColor: 'text-amber-400',
+      description: `Düşünme Seviyesi: ${thinkingLevel} (/effort off|minimal|low|medium|high|max|auto)`,
+      category: 'models',
+      subcommands: [
+        { name: 'off', description: 'Düşünmeyi tamamen kapat' },
+        { name: 'minimal', description: 'Minimum düşünme bütçesi' },
+        { name: 'low', description: 'Düşük düşünme derinliği' },
+        { name: 'medium', description: 'Dengeli orta düşünme derinliği' },
+        { name: 'high', description: 'Yüksek muhakeme derinliği' },
+        { name: 'max', description: 'Maksimum düşünme bütçesi' },
+        { name: 'auto', description: 'Otomatik dinamik düşünme derinliği' },
+      ],
+    },
+    {
+      id: 'fast',
+      name: 'fast',
+      fullCmd: '/fast',
+      glyph: '⚡',
+      glyphColor: 'text-amber-300 font-bold',
+      description: 'Hızlı servis katmanını aç/kapat (/fast on|ultra|off|status)',
+      category: 'models',
+      subcommands: [
+        { name: 'on', description: 'Hızlı servis katmanını etkinleştir' },
+        { name: 'ultra', description: 'Ultrafast katmanını etkinleştir' },
+        { name: 'off', description: 'Hızlı modu kapat' },
+        { name: 'status', description: 'Hızlı mod durumunu göster' },
+      ],
+    },
+    {
+      id: 'slow',
+      name: 'slow',
+      fullCmd: '/slow',
+      glyph: '⏳',
+      glyphColor: 'text-blue-300',
+      description: 'Yavaş / flex servis katmanını aç/kapat (/slow on|off|status)',
+      category: 'models',
+      subcommands: [
+        { name: 'on', description: 'Flex / yavaş servis katmanını etkinleştir' },
+        { name: 'off', description: 'Standart servis katmanına dön' },
+        { name: 'status', description: 'Yavaş mod durumunu göster' },
+      ],
+    },
+    {
+      id: 'extended-context',
+      name: 'extended-context',
+      fullCmd: '/extended-context',
+      glyph: '⤢',
+      glyphColor: 'text-purple-300',
+      description: 'Genişletilmiş bağlam pencerelerini aç/kapat (/extended-context on|off|status)',
+      category: 'models',
+      subcommands: [
+        { name: 'on', description: 'Genişletilmiş bağlam penceresini aç' },
+        { name: 'off', description: 'Standart bağlam penceresine dön' },
+        { name: 'status', description: 'Bağlam penceresi durumunu göster' },
+      ],
+    },
+    {
+      id: 'computer',
+      name: 'computer',
+      fullCmd: '/computer',
+      glyph: '🖥',
+      glyphColor: 'text-zinc-300',
+      description: 'Masaüstü ve ekran etkileşim preludünü aç/kapat (/computer on|off|status)',
+      category: 'models',
+      subcommands: [
+        { name: 'on', description: 'Bilgisayar kullanımını bu oturum için etkinleştir' },
+        { name: 'off', description: 'Bilgisayar kullanımını devre dışı bırak' },
+        { name: 'status', description: 'Bilgisayar kullanımı durumunu göster' },
+      ],
+    },
+    {
+      id: 'skillful',
+      name: 'skillful',
+      fullCmd: '/skillful',
+      glyph: '✦',
+      glyphColor: 'text-cyan-300',
+      description: 'Sistem promptunda becerilerin listelenmesini yönet (/skillful on|off|status)',
+      category: 'models',
+      subcommands: [
+        { name: 'on', description: 'Sistem promptuna beceri listesini ekle' },
+        { name: 'off', description: 'Sistem promptunda beceri listesini gizle' },
+        { name: 'status', description: 'Beceri listesi durumunu göster' },
+      ],
+    },
+    {
+      id: 'prewalk',
+      name: 'prewalk',
+      fullCmd: '/prewalk',
+      glyph: '🚶',
+      glyphColor: 'text-emerald-400',
+      description: 'Plan sonrası hafif modele tek seferlik geçiş handoffunu kur/iptal et (/prewalk restart|off)',
+      category: 'models',
+      subcommands: [
+        { name: 'restart', description: 'Varsayılan modele dön ve handoffu yeniden kur' },
+        { name: 'off', description: 'Mevcut oturumun handoffunu iptal et' },
+      ],
     },
     {
       id: 'advisor',
@@ -561,9 +825,17 @@ export const AgentStudio: React.FC<AgentStudioProps> = ({
       glyph: '👁',
       glyphColor: 'text-rose-400 font-bold',
       description: `Pasif Danışman: ${advisor ? 'Açık' : 'Kapalı'} (/advisor on|off|status|dump)`,
+      category: 'models',
+      subcommands: [
+        { name: 'on', description: 'Pasif danışmanı etkinleştir' },
+        { name: 'off', description: 'Pasif danışmanı devre dışı bırak' },
+        { name: 'status', description: 'Danışman durumunu görüntüle' },
+        { name: 'dump', description: 'Danışman transkriptini panoya kopyala', usage: '[raw]' },
+        { name: 'configure', description: 'Danışman ayarlarını aç' },
+      ],
     },
 
-    // Context & Session Compaction
+    // 5. Context & Session Compaction
     {
       id: 'compact',
       name: 'compact',
@@ -571,6 +843,7 @@ export const AgentStudio: React.FC<AgentStudioProps> = ({
       glyph: 'G',
       glyphColor: 'text-purple-400 font-bold',
       description: 'Konuşma bağlamını sıkıştırır (/compact [odak yönergeleri])',
+      category: 'compaction',
     },
     {
       id: 'shake',
@@ -579,6 +852,12 @@ export const AgentStudio: React.FC<AgentStudioProps> = ({
       glyph: '📳',
       glyphColor: 'text-purple-300',
       description: 'Ağır araç sonuçlarını ve görselleri bağlamdan sallar (/shake elide|images|thinking)',
+      category: 'compaction',
+      subcommands: [
+        { name: 'elide', description: 'Araç sonuçlarını ve büyük blokları çıkar (varsayılan)' },
+        { name: 'images', description: 'Görsel bloklarını bağlamdan sil' },
+        { name: 'thinking', description: 'Tüm düşünce bloklarını bağlamdan çıkar' },
+      ],
     },
     {
       id: 'handoff',
@@ -587,6 +866,7 @@ export const AgentStudio: React.FC<AgentStudioProps> = ({
       glyph: '🤝',
       glyphColor: 'text-emerald-300',
       description: 'Oturumu bir handoff belgesine özetleyip yerinde sıkıştırır (/handoff [odak])',
+      category: 'compaction',
     },
     {
       id: 'seance',
@@ -594,7 +874,8 @@ export const AgentStudio: React.FC<AgentStudioProps> = ({
       fullCmd: '/seance',
       glyph: '👻',
       glyphColor: 'text-purple-300',
-      description: 'Geçmiş oturum ve alt ajan transkriptlerine danışır (/seance [oturum-id])',
+      description: 'Geçmiş oturum ve alt ajan transkriptlerine danışır (/seance [oturum-id|yol])',
+      category: 'compaction',
     },
     {
       id: 'fresh',
@@ -603,6 +884,7 @@ export const AgentStudio: React.FC<AgentStudioProps> = ({
       glyph: '↻',
       glyphColor: 'text-teal-400 font-bold',
       description: 'Transkripti değiştirmeden model sağlayıcı yayın durumunu sıfırlar',
+      category: 'compaction',
     },
     {
       id: 'clear',
@@ -611,6 +893,7 @@ export const AgentStudio: React.FC<AgentStudioProps> = ({
       glyph: '🗑',
       glyphColor: 'text-red-400',
       description: 'Mevcut sohbet mesajlarını temizler',
+      category: 'compaction',
     },
     {
       id: 'new',
@@ -619,6 +902,7 @@ export const AgentStudio: React.FC<AgentStudioProps> = ({
       glyph: '+',
       glyphColor: 'text-emerald-400 font-bold text-sm',
       description: 'Temiz ve yeni bir oturum başlatır',
+      category: 'compaction',
     },
     {
       id: 'delete',
@@ -627,9 +911,24 @@ export const AgentStudio: React.FC<AgentStudioProps> = ({
       glyph: '✕',
       glyphColor: 'text-red-500 font-bold',
       description: 'Mevcut oturumu diskten siler ve yeni bir oturum açar',
+      category: 'compaction',
     },
 
-    // Session Management & Multi-root
+    // 6. Session Management & Multi-root
+    {
+      id: 'session',
+      name: 'session',
+      fullCmd: '/session',
+      glyph: '📋',
+      glyphColor: 'text-zinc-300',
+      description: 'Oturum detayları, hesap sabitleme ve temizleme (/session info|delete|pin)',
+      category: 'session',
+      subcommands: [
+        { name: 'info', description: 'Oturum bilgisi ve kullanım istatistiklerini göster' },
+        { name: 'delete', description: 'Mevcut oturumu sil ve oturum seçiciye dön' },
+        { name: 'pin', description: 'OAuth hesabını bu oturuma sabitle', usage: '[hesap]' },
+      ],
+    },
     {
       id: 'resume',
       name: 'resume',
@@ -637,6 +936,7 @@ export const AgentStudio: React.FC<AgentStudioProps> = ({
       glyph: '🕒',
       glyphColor: 'text-zinc-300',
       description: 'Kayıtlı oturumlar listesini açar veya oturuma döner (/resume [id|@claude|@codex])',
+      category: 'session',
     },
     {
       id: 'pin',
@@ -645,6 +945,7 @@ export const AgentStudio: React.FC<AgentStudioProps> = ({
       glyph: '📌',
       glyphColor: 'text-amber-400',
       description: 'Oturumu devam listesinin en tepesine sabitler (/pin [oturum-id])',
+      category: 'session',
     },
     {
       id: 'rename',
@@ -653,6 +954,7 @@ export const AgentStudio: React.FC<AgentStudioProps> = ({
       glyph: '✏',
       glyphColor: 'text-zinc-300',
       description: 'Oturumun başlığını yeniden adlandırır (/rename [başlık])',
+      category: 'session',
     },
     {
       id: 'move',
@@ -661,6 +963,7 @@ export const AgentStudio: React.FC<AgentStudioProps> = ({
       glyph: '📁',
       glyphColor: 'text-blue-400',
       description: 'Mevcut oturumu farklı bir dizine taşır (/move <dizin-yolu>)',
+      category: 'session',
     },
     {
       id: 'wt',
@@ -669,6 +972,39 @@ export const AgentStudio: React.FC<AgentStudioProps> = ({
       glyph: '🌿',
       glyphColor: 'text-emerald-400',
       description: 'Oturumu yeni bir git worktree içine taşır (/wt [dal-adı])',
+      category: 'session',
+    },
+    {
+      id: 'branch',
+      name: 'branch',
+      fullCmd: '/branch',
+      glyph: '🌱',
+      glyphColor: 'text-emerald-300',
+      description: 'Önceki bir mesaja geri sararak yeni bir dal oluşturur (/branch [id])',
+      category: 'session',
+    },
+    {
+      id: 'fork',
+      name: 'fork',
+      fullCmd: '/fork',
+      glyph: '⑂',
+      glyphColor: 'text-indigo-400',
+      description: 'Oturumu çoklar veya yeni bir terminal/pencere bölmesinde açar (/fork pane|window|tab)',
+      category: 'session',
+      subcommands: [
+        { name: 'pane', description: 'Oturumu yeni bir terminal bölmesinde aç' },
+        { name: 'window', description: 'Oturumu yeni bir pencerede aç' },
+        { name: 'tab', description: 'Oturumu yeni bir sekmede aç' },
+      ],
+    },
+    {
+      id: 'tree',
+      name: 'tree',
+      fullCmd: '/tree',
+      glyph: '🌳',
+      glyphColor: 'text-emerald-400',
+      description: 'Oturum ağacında ve dallarda gezinir',
+      category: 'session',
     },
     {
       id: 'add-dir',
@@ -677,6 +1013,7 @@ export const AgentStudio: React.FC<AgentStudioProps> = ({
       glyph: '📂',
       glyphColor: 'text-blue-300',
       description: 'Oturuma ek bir çalışma dizini ekler (Multi-root: /add-dir <yol>)',
+      category: 'session',
     },
     {
       id: 'remove-dir',
@@ -685,6 +1022,7 @@ export const AgentStudio: React.FC<AgentStudioProps> = ({
       glyph: '📁',
       glyphColor: 'text-red-400',
       description: 'Ek çalışma dizinini oturumdan kaldırır (/remove-dir <yol>)',
+      category: 'session',
     },
     {
       id: 'dirs',
@@ -693,286 +1031,35 @@ export const AgentStudio: React.FC<AgentStudioProps> = ({
       glyph: '🗂',
       glyphColor: 'text-zinc-300',
       description: 'Oturumun aktif tüm çalışma dizinlerini listeler',
-    },
-    {
-      id: 'session',
-      name: 'session',
-      fullCmd: '/session',
-      glyph: '📋',
-      glyphColor: 'text-zinc-300',
-      description: 'Oturum detayları, hesap sabitleme ve temizleme (/session info|delete|pin)',
+      category: 'session',
     },
 
-    // Telemetry, Limits & Changelog
+    // 7. MCP, Remote & Collaboration
     {
-      id: 'usage',
-      name: 'usage',
-      fullCmd: '/usage',
-      glyph: '⚡',
+      id: 'mcp',
+      name: 'mcp',
+      fullCmd: '/mcp',
+      glyph: '🔌',
       glyphColor: 'text-amber-400 font-bold',
-      description: 'Canlı model kotalarını ve hız sınırlarını görüntüler (/usage [show|reset])',
-    },
-    {
-      id: 'stats',
-      name: 'stats',
-      fullCmd: '/stats',
-      glyph: '📊',
-      glyphColor: 'text-amber-400',
-      description: 'Detaylı kullanım istatistikleri ve telemetri paneli (/stats)',
-    },
-    {
-      id: 'changelog',
-      name: 'changelog',
-      fullCmd: '/changelog',
-      glyph: '📰',
-      glyphColor: 'text-emerald-400 font-bold',
-      description: 'oh-my-pi resmi sürüm notları ve değişiklik geçmişi (/changelog [full|last N])',
-    },
-    {
-      id: 'context',
-      name: 'context',
-      fullCmd: '/context',
-      glyph: '📏',
-      glyphColor: 'text-purple-400',
-      description: 'Mevcut konuşma token ve bağlam kullanım dökümünü gösterir',
-    },
-    {
-      id: 'tools',
-      name: 'tools',
-      fullCmd: '/tools',
-      glyph: '🛠',
-      glyphColor: 'text-cyan-400',
-      description: 'Ajana görünür ve etkin olan tüm araçları listeler',
-    },
-    {
-      id: 'jobs',
-      name: 'jobs',
-      fullCmd: '/jobs',
-      glyph: '⚙',
-      glyphColor: 'text-zinc-300',
-      description: 'Arka plan asenkron görev durumlarını listeler (/jobs [full|kill <id>])',
-    },
-
-    // Developer Tools & Execution
-    {
-      id: 'cleanse',
-      name: 'cleanse',
-      fullCmd: '/cleanse',
-      glyph: '🩺',
-      glyphColor: 'text-emerald-400',
-      description: 'Paralel subagentlar ile projedeki tüm derleme ve tip hatalarını temizler',
-    },
-    {
-      id: 'devtools',
-      name: 'devtools',
-      fullCmd: '/devtools',
-      glyph: '⌘',
-      glyphColor: 'text-zinc-300 font-bold',
-      description: 'Geliştirici araçları çekmecesini açar (Git, Ps, Cleanse)',
-    },
-    {
-      id: 'tan',
-      name: 'tan',
-      fullCmd: '/tan',
-      glyph: '🚀',
-      glyphColor: 'text-orange-400',
-      description: 'Teğetsel bir yan iş için tam arka plan ajanı çalıştırır (/tan <görev>)',
-    },
-    {
-      id: 'omfg',
-      name: 'omfg',
-      fullCmd: '/omfg',
-      glyph: '⚡',
-      glyphColor: 'text-rose-400',
-      description: 'Sürekli tekrarlayan istenmeyen bir davranışı durdurmak için TTSR kuralı oluşturur',
-    },
-    {
-      id: 'btw',
-      name: 'btw',
-      fullCmd: '/btw',
-      glyph: '?',
-      glyphColor: 'text-red-400 font-bold',
-      description: 'Ana konuşma bağlamını kirletmeden ajana hızlı yan soru sorar (/btw [soru])',
-    },
-    {
-      id: 'queue',
-      name: 'queue',
-      fullCmd: '/queue',
-      glyph: '📥',
-      glyphColor: 'text-indigo-300',
-      description: 'Ajan mevcut yanıtını bitirdiğinde işlenmek üzere mesaj kuyruğa alır',
-    },
-    {
-      id: 'retry',
-      name: 'retry',
-      fullCmd: '/retry',
-      glyph: '↻',
-      glyphColor: 'text-amber-400',
-      description: 'En son başarısız olan ajan adımını yeniden dener',
-    },
-    {
-      id: 'debug',
-      name: 'debug',
-      fullCmd: '/debug',
-      glyph: '🐛',
-      glyphColor: 'text-rose-400',
-      description: 'Hata ayıklama ve debug araçları menüsünü açar',
-    },
-    {
-      id: 'memory',
-      name: 'memory',
-      fullCmd: '/memory',
-      glyph: '🧠',
-      glyphColor: 'text-purple-400',
-      description: 'Kalıcı bellek yönetimi ve senkronizasyonu (/memory view|stats|sync|clear)',
-    },
-
-    // Collaboration & Export
-    {
-      id: 'export',
-      name: 'export',
-      fullCmd: '/export',
-      glyph: '📤',
-      glyphColor: 'text-cyan-400',
-      description: 'Oturumu şık bir HTML dosyasına dışa aktarır (/export [--themes] [yol])',
-    },
-    {
-      id: 'dump',
-      name: 'dump',
-      fullCmd: '/dump',
-      glyph: '📋',
-      glyphColor: 'text-zinc-300',
-      description: 'Konuşma transkriptini panoya kopyalar (/dump [all|anon])',
-    },
-    {
-      id: 'share',
-      name: 'share',
-      fullCmd: '/share',
-      glyph: '🔗',
-      glyphColor: 'text-blue-400',
-      description: 'Oturumu şifreli bir web bağlantısı veya gizli gist ile paylaşır',
-    },
-    {
-      id: 'collab',
-      name: 'collab',
-      fullCmd: '/collab',
-      glyph: '📡',
-      glyphColor: 'text-emerald-400',
-      description: 'Oturumu canlı röle üzerinden paylaşıma açar (/collab start|view|list|stop)',
-    },
-    {
-      id: 'join',
-      name: 'join',
-      fullCmd: '/join',
-      glyph: '⇢',
-      glyphColor: 'text-cyan-400',
-      description: 'Canlı bir ortak çalışma (collab) oturumuna katılır (/join <link>)',
-    },
-    {
-      id: 'leave',
-      name: 'leave',
-      fullCmd: '/leave',
-      glyph: '⇠',
-      glyphColor: 'text-rose-400',
-      description: 'Aktif collab oturumundan ayrılır',
-    },
-    {
-      id: 'trace',
-      name: 'trace',
-      fullCmd: '/trace',
-      glyph: '📈',
-      glyphColor: 'text-indigo-400',
-      description: 'Bu oturumun işlem izini (trace) istatistik panosunda açar',
-    },
-    {
-      id: 'browser',
-      name: 'browser',
-      fullCmd: '/browser',
-      glyph: '🌐',
-      glyphColor: 'text-sky-400',
-      description: 'Tarayıcı eval preludünü başlıksız (headless) veya görünür yapar (/browser headless|visible)',
-    },
-    {
-      id: 'copy',
-      name: 'copy',
-      fullCmd: '/copy',
-      glyph: '📋',
-      glyphColor: 'text-zinc-300',
-      description: 'Konuşmadan kod, komut veya bağlantı kopyalar (/copy [code|cmd|link])',
-    },
-    {
-      id: 'open',
-      name: 'open',
-      fullCmd: '/open',
-      glyph: '↗',
-      glyphColor: 'text-sky-400',
-      description: 'Konuşmadaki son bağlantıyı varsayılan web tarayıcınızda açar',
-    },
-
-    // Marketplace, Plugins & Extensions
-    {
-      id: 'marketplace',
-      name: 'marketplace',
-      fullCmd: '/marketplace',
-      glyph: '🛒',
-      glyphColor: 'text-emerald-400',
-      description: 'Eklenti mağazası kaynaklarını yönet (/marketplace add|list|discover|install)',
-    },
-    {
-      id: 'plugins',
-      name: 'plugins',
-      fullCmd: '/plugins',
-      glyph: '📦',
-      glyphColor: 'text-amber-400',
-      description: 'Yüklü eklentileri listeler ve yönetir (/plugins list|enable|disable)',
-    },
-    {
-      id: 'reload-plugins',
-      name: 'reload-plugins',
-      fullCmd: '/reload-plugins',
-      glyph: '↻',
-      glyphColor: 'text-teal-400',
-      description: 'Tüm eklentileri, becerileri, komutları ve MCP araçlarını yeniden yükler',
-    },
-    {
-      id: 'force',
-      name: 'force',
-      fullCmd: '/force',
-      glyph: '🔨',
-      glyphColor: 'text-rose-400',
-      description: 'Sonraki turu belirli bir aracı kullanmaya zorlar (/force <araç> [prompt])',
-    },
-    {
-      id: 'live',
-      name: 'live',
-      fullCmd: '/live',
-      glyph: '🎙',
-      glyphColor: 'text-rose-400',
-      description: 'Codex destekli gerçek zamanlı sesli modu başlatır',
-    },
-    {
-      id: 'record',
-      name: 'record',
-      fullCmd: '/record',
-      glyph: '⏺',
-      glyphColor: 'text-red-400',
-      description: 'Terminal oturumunu kaydedilebilir bir replay dosyasına kaydeder (omp play)',
-    },
-    {
-      id: 'pause',
-      name: 'pause',
-      fullCmd: '/pause',
-      glyph: '⏸',
-      glyphColor: 'text-amber-400',
-      description: 'Tüm ajanları (ana ajan, subagentlar, danışman) geçici olarak dondurur',
-    },
-    {
-      id: 'forget-approvals',
-      name: 'forget-approvals',
-      fullCmd: '/forget-approvals',
-      glyph: '🔒',
-      glyphColor: 'text-zinc-400',
-      description: 'Hatırlanan tüm dosya ve klasör izin onaylarını sıfırlar',
+      description: 'MCP (Model Context Protocol) sunucularını yönetir (/mcp list|add|remove|test|reload)',
+      category: 'remote',
+      subcommands: [
+        { name: 'list', description: 'Tanımlı tüm MCP sunucularını listele' },
+        { name: 'add', description: 'Yeni bir MCP sunucusu ekle', usage: '<ad> [--url <url>] [-- <komut>]' },
+        { name: 'remove', description: 'Bir MCP sunucusunu kaldır', usage: '<ad>' },
+        { name: 'test', description: 'Sunucu bağlantısını test et', usage: '<ad>' },
+        { name: 'reauth', description: 'OAuth kimlik doğrulamasını yinele', usage: '<ad>' },
+        { name: 'unauth', description: 'OAuth kimlik bilgisini sil', usage: '<ad>' },
+        { name: 'enable', description: 'MCP sunucusunu etkinleştir', usage: '<ad>' },
+        { name: 'disable', description: 'MCP sunucusunu devre dışı bırak', usage: '<ad>' },
+        { name: 'smithery-search', description: 'Smithery kayıt defterinde sunucu ara', usage: '<kelime>' },
+        { name: 'reconnect', description: 'MCP sunucusuna yeniden bağlan', usage: '<ad>' },
+        { name: 'reload', description: 'MCP araçlarını yeniden yükle' },
+        { name: 'resources', description: 'Kullanılabilir MCP kaynaklarını listele' },
+        { name: 'prompts', description: 'Kullanılabilir MCP promptlarını listele' },
+        { name: 'notifications', description: 'Bildirim yeteneklerini göster' },
+        { name: 'help', description: 'Kullanım kılavuzunu görüntüle' },
+      ],
     },
     {
       id: 'ssh',
@@ -981,14 +1068,620 @@ export const AgentStudio: React.FC<AgentStudioProps> = ({
       glyph: '🖥',
       glyphColor: 'text-cyan-400',
       description: 'SSH sunucu bağlantılarını yönetir (/ssh add|list|remove)',
+      category: 'remote',
+      subcommands: [
+        { name: 'add', description: 'Yeni bir SSH sunucusu ekle', usage: '<ad> --host <host> [--user <kullanici>]' },
+        { name: 'list', description: 'Tanımlı tüm SSH sunucularını listele' },
+        { name: 'remove', description: 'Bir SSH sunucusunu kaldır', usage: '<ad>' },
+        { name: 'help', description: 'Kullanım kılavuzunu görüntüle' },
+      ],
     },
     {
-      id: 'skills',
-      name: 'skills',
-      fullCmd: '/skills',
-      glyph: '✦',
-      glyphColor: 'text-cyan-400 font-bold',
-      description: 'Beceriler kütüphanesini ve özel beceri editörünü açar (/skills search|install)',
+      id: 'collab',
+      name: 'collab',
+      fullCmd: '/collab',
+      glyph: '📡',
+      glyphColor: 'text-emerald-400',
+      description: 'Oturumu canlı röle üzerinden paylaşıma açar (/collab start|view|list|stop)',
+      category: 'remote',
+      subcommands: [
+        { name: 'start', description: 'Canlı işbirliği oturumunu başlat' },
+        { name: 'view', description: 'Yalnızca izleme (salt-okunur) bağlantısı oluştur' },
+        { name: 'list', description: 'Aktif yerel Collab sunucularını listele' },
+        { name: 'status', description: 'Bağlantı ve katılımcı durumunu göster' },
+        { name: 'stop', description: 'Canlı paylaşımı sonlandır' },
+      ],
+    },
+    {
+      id: 'join',
+      name: 'join',
+      fullCmd: '/join',
+      glyph: '⇢',
+      glyphColor: 'text-cyan-400',
+      description: 'Canlı bir ortak çalışma (collab) oturumuna katılır (/join <link>)',
+      category: 'remote',
+    },
+    {
+      id: 'leave',
+      name: 'leave',
+      fullCmd: '/leave',
+      glyph: '⇠',
+      glyphColor: 'text-rose-400',
+      description: 'Aktif collab oturumundan ayrılır',
+      category: 'remote',
+    },
+    {
+      id: 'export',
+      name: 'export',
+      fullCmd: '/export',
+      glyph: '📤',
+      glyphColor: 'text-cyan-400',
+      description: 'Oturumu şık bir HTML dosyasına dışa aktarır (/export [--themes] [yol])',
+      category: 'remote',
+    },
+    {
+      id: 'dump',
+      name: 'dump',
+      fullCmd: '/dump',
+      glyph: '📋',
+      glyphColor: 'text-zinc-300',
+      description: 'Konuşma transkriptini panoya kopyalar (/dump [all|anon])',
+      category: 'remote',
+      subcommands: [
+        { name: 'all', description: 'Ana transkript, istek JSON ve alt ajanları zip olarak kaydet' },
+        { name: 'anon', description: 'Hassas verileri maskelenmiş transkript zip çıktısı al' },
+      ],
+    },
+    {
+      id: 'share',
+      name: 'share',
+      fullCmd: '/share',
+      glyph: '🔗',
+      glyphColor: 'text-blue-400',
+      description: 'Oturumu şifreli bir web bağlantısı veya gizli gist ile paylaşır',
+      category: 'remote',
+    },
+    {
+      id: 'trace',
+      name: 'trace',
+      fullCmd: '/trace',
+      glyph: '📈',
+      glyphColor: 'text-indigo-400',
+      description: 'Bu oturumun işlem izini (trace) istatistik panosunda açar',
+      category: 'remote',
+    },
+    {
+      id: 'browser',
+      name: 'browser',
+      fullCmd: '/browser',
+      glyph: '🌐',
+      glyphColor: 'text-sky-400',
+      description: 'Tarayıcı eval preludünü başlıksız (headless) veya görünür yapar (/browser headless|visible)',
+      category: 'remote',
+      subcommands: [
+        { name: 'headless', description: 'Başlıksız (arkaplanda gizli) tarayıcı modu' },
+        { name: 'visible', description: 'Görünür masaüstü tarayıcı penceresi' },
+      ],
+    },
+    {
+      id: 'browser-relay',
+      name: 'browser-relay',
+      fullCmd: '/browser-relay',
+      glyph: '🌐',
+      glyphColor: 'text-sky-300',
+      description: 'Kendi Chrome sekmelerinizi sürmek için yerel CDP relay sunucusunu yönetir',
+      category: 'remote',
+    },
+    {
+      id: 'login',
+      name: 'login',
+      fullCmd: '/login',
+      glyph: '🔑',
+      glyphColor: 'text-emerald-400 font-bold',
+      description: 'Model sağlayıcı OAuth veya API anahtarı giriş penceresini açar (/login [provider])',
+      category: 'remote',
+    },
+    {
+      id: 'logout',
+      name: 'logout',
+      fullCmd: '/logout',
+      glyph: '🚪',
+      glyphColor: 'text-rose-400',
+      description: 'Model sağlayıcı oturumunu kapatır ve kimlik bilgisini siler (/logout [provider])',
+      category: 'remote',
+    },
+
+    // 8. Developer Tools, Diagnostics & Execution
+    {
+      id: 'git',
+      name: 'git',
+      fullCmd: '/git',
+      glyph: '🌿',
+      glyphColor: 'text-emerald-400',
+      description: 'Git durumunu, split diff ve staging arayüzünü açar (/git [revizyon])',
+      category: 'tools',
+    },
+    {
+      id: 'commit',
+      name: 'commit',
+      fullCmd: '/commit',
+      glyph: '📦',
+      glyphColor: 'text-amber-400',
+      description: 'Değişiklikleri analiz ederek otomatik commit mesajı oluşturur ve commitler (/commit [--push|--dry-run])',
+      category: 'tools',
+    },
+    {
+      id: 'cleanse',
+      name: 'cleanse',
+      fullCmd: '/cleanse',
+      glyph: '🩺',
+      glyphColor: 'text-emerald-400',
+      description: 'Paralel subagentlar ile projedeki tüm derleme ve tip hatalarını temizler',
+      category: 'tools',
+    },
+    {
+      id: 'devtools',
+      name: 'devtools',
+      fullCmd: '/devtools',
+      glyph: '⌘',
+      glyphColor: 'text-zinc-300 font-bold',
+      description: 'Geliştirici araçları çekmecesini açar (Git, Ps, Cleanse)',
+      category: 'tools',
+    },
+    {
+      id: 'ps',
+      name: 'ps',
+      fullCmd: '/ps',
+      glyph: '⚙',
+      glyphColor: 'text-zinc-300',
+      description: 'Arka planda denetlenen daemon ve servis süreçlerini listeler',
+      category: 'tools',
+    },
+    {
+      id: 'jobs',
+      name: 'jobs',
+      fullCmd: '/jobs',
+      glyph: '⚙',
+      glyphColor: 'text-zinc-300',
+      description: 'Arka plan asenkron görev durumlarını listeler (/jobs full|kill <id>)',
+      category: 'tools',
+      subcommands: [
+        { name: 'full', description: 'Tam ve kesintisiz komut satırlarını göster' },
+        { name: 'kill', description: 'Çalışan bir arka plan görevini iptal et', usage: '<id>|all' },
+      ],
+    },
+    {
+      id: 'find',
+      name: 'find',
+      fullCmd: '/find',
+      glyph: '🔍',
+      glyphColor: 'text-cyan-400',
+      description: 'Doğal dille anlamsal kod araması yapar (/find <açıklama> [yol])',
+      category: 'tools',
+    },
+    {
+      id: 'grep',
+      name: 'grep',
+      fullCmd: '/grep',
+      glyph: '⚡',
+      glyphColor: 'text-amber-400',
+      description: 'Çalışma alanında hızlı regex metin araması yapar (/grep <pattern> [yol])',
+      category: 'tools',
+    },
+    {
+      id: 'search',
+      name: 'search',
+      fullCmd: '/search',
+      glyph: '🌐',
+      glyphColor: 'text-sky-400',
+      description: 'Web arama sağlayıcılarını test eder (/search <sorgu>)',
+      category: 'tools',
+    },
+    {
+      id: 'toks',
+      name: 'toks',
+      fullCmd: '/toks',
+      glyph: '🔢',
+      glyphColor: 'text-amber-400',
+      description: 'Çevrimdışı tokenizerlar ile metin veya dosyanın token sayımını yapar (/toks <metin|dosya>)',
+      category: 'tools',
+    },
+    {
+      id: 'token',
+      name: 'token',
+      fullCmd: '/token',
+      glyph: '🔑',
+      glyphColor: 'text-indigo-400',
+      description: 'Sağlayıcı API anahtarını veya aktif tokenını görüntüler (/token [sağlayıcı])',
+      category: 'tools',
+    },
+    {
+      id: 'gc',
+      name: 'gc',
+      fullCmd: '/gc',
+      glyph: '🧹',
+      glyphColor: 'text-emerald-400',
+      description: 'Depolama çöp toplayıcısını çalıştırarak gereksiz oturum ve blob ları temizler (/gc [--apply|--blobs])',
+      category: 'tools',
+      subcommands: [
+        { name: '--apply', description: 'Temizliği diske uygula (varsayılan simülasyondur)' },
+        { name: '--blobs', description: 'Referanssız blob dosyalarını süpür' },
+        { name: '--archive', description: 'Eski oturumları arşivle' },
+        { name: '--wal', description: 'Veritabanı WAL dosyalarını kontrol et' },
+      ],
+    },
+    {
+      id: 'anonymize',
+      name: 'anonymize',
+      fullCmd: '/anonymize',
+      glyph: '🕶',
+      glyphColor: 'text-purple-400',
+      description: 'Oturum transkriptindeki hassas verileri gizleyerek anonim kopya üretir',
+      category: 'tools',
+    },
+    {
+      id: 'gallery',
+      name: 'gallery',
+      fullCmd: '/gallery',
+      glyph: '🖼',
+      glyphColor: 'text-pink-400',
+      description: 'Görsel render, araç ve durum bileşenleri galerisini açar',
+      category: 'tools',
+    },
+    {
+      id: 'say',
+      name: 'say',
+      fullCmd: '/say',
+      glyph: '🗣',
+      glyphColor: 'text-rose-400',
+      description: 'Metni yerel TTS motoruyla seslendirir (/say <metin> [--voice <ses>])',
+      category: 'tools',
+    },
+    {
+      id: 'play',
+      name: 'play',
+      fullCmd: '/play',
+      glyph: '▶',
+      glyphColor: 'text-emerald-400',
+      description: 'Kaydedilmiş bir oturum dosyasını yeniden oynatır (/play <dosya>)',
+      category: 'tools',
+    },
+    {
+      id: 'clip',
+      name: 'clip',
+      fullCmd: '/clip',
+      glyph: '✂',
+      glyphColor: 'text-amber-400',
+      description: 'Oturum kaydını live.omp.sh üzerine klip olarak yükler',
+      category: 'tools',
+    },
+    {
+      id: 'read',
+      name: 'read',
+      fullCmd: '/read',
+      glyph: '📄',
+      glyphColor: 'text-zinc-300',
+      description: 'Dosya, URL veya internal URI içeriğini okur (/read <yol>)',
+      category: 'tools',
+    },
+    {
+      id: 'compress',
+      name: 'compress',
+      fullCmd: '/compress',
+      glyph: '🗜',
+      glyphColor: 'text-purple-400',
+      description: 'Metin dosyasını yoğun istem formatına sıkıştırır (/compress <dosya>)',
+      category: 'tools',
+    },
+    {
+      id: 'ttsr',
+      name: 'ttsr',
+      fullCmd: '/ttsr',
+      glyph: '⏳',
+      glyphColor: 'text-amber-400',
+      description: 'Zaman yolculuklu akış kurallarını (TTSR) test eder ve listeler (/ttsr test|list|scan)',
+      category: 'tools',
+      subcommands: [
+        { name: 'test', description: 'Metin veya dosya üzerinde TTSR kuralı test et', usage: '<metin>' },
+        { name: 'list', description: 'Yüklü tüm TTSR kurallarını listele' },
+        { name: 'scan', description: 'Proje klasörünü kurallara göre tara', usage: '[dizin]' },
+      ],
+    },
+    {
+      id: 'grievances',
+      name: 'grievances',
+      fullCmd: '/grievances',
+      glyph: '⚠️',
+      glyphColor: 'text-rose-400',
+      description: 'Otomatik QA hata bildirimlerini görüntüler ve yönetir (/grievances list|clean|push)',
+      category: 'tools',
+      subcommands: [
+        { name: 'list', description: 'Raporlanan araç hata kayıtlarını listele' },
+        { name: 'clean', description: 'Hata kayıtlarını temizle', usage: '[--id <id>]' },
+        { name: 'push', description: 'Hata raporlarını sunucuya ilet' },
+      ],
+    },
+    {
+      id: 'tiny-models',
+      name: 'tiny-models',
+      fullCmd: '/tiny-models',
+      glyph: '🔬',
+      glyphColor: 'text-indigo-300',
+      description: 'Yerel mini modelleri yönetir (/tiny-models download|list)',
+      category: 'tools',
+      subcommands: [
+        { name: 'download', description: 'Yerel mini modelleri indir' },
+        { name: 'list', description: 'Yüklü mini modelleri listele' },
+      ],
+    },
+    {
+      id: 'dry-balance',
+      name: 'dry-balance',
+      fullCmd: '/dry-balance',
+      glyph: '⚖',
+      glyphColor: 'text-cyan-300',
+      description: 'OAuth hesap dengelemesini simüle eder (/dry-balance [model])',
+      category: 'tools',
+    },
+    {
+      id: 'bench',
+      name: 'bench',
+      fullCmd: '/bench',
+      glyph: '⏱',
+      glyphColor: 'text-amber-400',
+      description: 'Modeller arası TTFT ve token/sn hız kıyaslaması yapar (/bench <modeller...>)',
+      category: 'tools',
+    },
+    {
+      id: 'tan',
+      name: 'tan',
+      fullCmd: '/tan',
+      glyph: '🚀',
+      glyphColor: 'text-orange-400',
+      description: 'Teğetsel bir yan iş için tam arka plan ajanı çalıştırır (/tan <görev>)',
+      category: 'tools',
+    },
+    {
+      id: 'omfg',
+      name: 'omfg',
+      fullCmd: '/omfg',
+      glyph: '⚡',
+      glyphColor: 'text-rose-400',
+      description: 'Sürekli tekrarlayan istenmeyen bir davranışı durdurmak için TTSR kuralı oluşturur',
+      category: 'tools',
+    },
+    {
+      id: 'btw',
+      name: 'btw',
+      fullCmd: '/btw',
+      glyph: '?',
+      glyphColor: 'text-red-400 font-bold',
+      description: 'Ana konuşma bağlamını kirletmeden ajana hızlı yan soru sorar (/btw [soru])',
+      category: 'tools',
+    },
+    {
+      id: 'queue',
+      name: 'queue',
+      fullCmd: '/queue',
+      glyph: '📥',
+      glyphColor: 'text-indigo-300',
+      description: 'Ajan mevcut yanıtını bitirdiğinde işlenmek üzere mesaj kuyruğa alır',
+      category: 'tools',
+    },
+    {
+      id: 'retry',
+      name: 'retry',
+      fullCmd: '/retry',
+      glyph: '↻',
+      glyphColor: 'text-amber-400',
+      description: 'En son başarısız olan ajan adımını yeniden dener',
+      category: 'tools',
+    },
+    {
+      id: 'debug',
+      name: 'debug',
+      fullCmd: '/debug',
+      glyph: '🐛',
+      glyphColor: 'text-rose-400',
+      description: 'Hata ayıklama ve debug araçları menüsünü açar',
+      category: 'tools',
+    },
+    {
+      id: 'memory',
+      name: 'memory',
+      fullCmd: '/memory',
+      glyph: '🧠',
+      glyphColor: 'text-purple-400',
+      description: 'Kalıcı bellek yönetimi ve senkronizasyonu (/memory view|stats|sync|clear)',
+      category: 'tools',
+      subcommands: [
+        { name: 'view', description: 'Aktif bellek yükünü göster' },
+        { name: 'stats', description: 'Bellek motoru istatistiklerini göster' },
+        { name: 'diagnose', description: 'Bellek teşhisini çalıştır' },
+        { name: 'sync', description: 'Bellek birleştirmesini hemen çalıştır' },
+        { name: 'clear', description: 'Kaydedilmiş bellek verilerini temizle' },
+        { name: 'mm list', description: 'Aktif zihinsel modelleri listele' },
+        { name: 'mm show', description: 'Bir zihinsel modeli görüntüle', usage: '<id>' },
+      ],
+    },
+    {
+      id: 'copy',
+      name: 'copy',
+      fullCmd: '/copy',
+      glyph: '📋',
+      glyphColor: 'text-zinc-300',
+      description: 'Konuşmadan kod, komut veya bağlantı kopyalar (/copy [code|cmd|link])',
+      category: 'tools',
+    },
+    {
+      id: 'open',
+      name: 'open',
+      fullCmd: '/open',
+      glyph: '↗',
+      glyphColor: 'text-sky-400',
+      description: 'Konuşmadaki son bağlantıyı varsayılan web tarayıcınızda açar',
+      category: 'tools',
+    },
+    {
+      id: 'marketplace',
+      name: 'marketplace',
+      fullCmd: '/marketplace',
+      glyph: '🛒',
+      glyphColor: 'text-emerald-400',
+      description: 'Eklenti mağazası kaynaklarını yönet (/marketplace add|list|discover|install)',
+      category: 'tools',
+      subcommands: [
+        { name: 'list', description: 'Tanımlı eklenti mağazalarını listele' },
+        { name: 'add', description: 'Yeni bir mağaza kaynağı ekle', usage: '<kaynak>' },
+        { name: 'remove', description: 'Bir mağaza kaynağını kaldır', usage: '<ad>' },
+        { name: 'discover', description: 'Mevcut eklentileri keşfet' },
+        { name: 'install', description: 'Mağazadan eklenti yükle', usage: '<ad@kaynak>' },
+        { name: 'uninstall', description: 'Eklentiyi kaldır', usage: '<ad@kaynak>' },
+        { name: 'installed', description: 'Yüklü mağaza eklentilerini listele' },
+        { name: 'upgrade', description: 'Eklentileri güncelle' },
+        { name: 'help', description: 'Kullanım kılavuzunu görüntüle' },
+      ],
+    },
+    {
+      id: 'plugins',
+      name: 'plugins',
+      fullCmd: '/plugins',
+      glyph: '📦',
+      glyphColor: 'text-amber-400',
+      description: 'Yüklü eklentileri listeler ve yönetir (/plugins list|enable|disable)',
+      category: 'tools',
+      subcommands: [
+        { name: 'list', description: 'Yüklü tüm eklentileri listele' },
+        { name: 'enable', description: 'Bir eklentiyi etkinleştir', usage: '<eklenti>' },
+        { name: 'disable', description: 'Bir eklentiyi devre dışı bırak', usage: '<eklenti>' },
+      ],
+    },
+    {
+      id: 'reload-plugins',
+      name: 'reload-plugins',
+      fullCmd: '/reload-plugins',
+      glyph: '↻',
+      glyphColor: 'text-teal-400',
+      description: 'Tüm eklentileri, becerileri, komutları ve MCP araçlarını yeniden yükler',
+      category: 'tools',
+    },
+    {
+      id: 'force',
+      name: 'force',
+      fullCmd: '/force',
+      glyph: '🔨',
+      glyphColor: 'text-rose-400',
+      description: 'Sonraki turu belirli bir aracı kullanmaya zorlar (/force <araç> [prompt])',
+      category: 'tools',
+    },
+    {
+      id: 'live',
+      name: 'live',
+      fullCmd: '/live',
+      glyph: '🎙',
+      glyphColor: 'text-rose-400',
+      description: 'Codex destekli gerçek zamanlı sesli modu başlatır',
+      category: 'tools',
+    },
+    {
+      id: 'record',
+      name: 'record',
+      fullCmd: '/record',
+      glyph: '⏺',
+      glyphColor: 'text-red-400',
+      description: 'Terminal oturumunu kaydedilebilir bir replay dosyasına kaydeder (omp play)',
+      category: 'tools',
+    },
+    {
+      id: 'pause',
+      name: 'pause',
+      fullCmd: '/pause',
+      glyph: '⏸',
+      glyphColor: 'text-amber-400',
+      description: 'Tüm ajanları (ana ajan, subagentlar, danışman) geçici olarak dondurur',
+      category: 'tools',
+    },
+    {
+      id: 'forget-approvals',
+      name: 'forget-approvals',
+      fullCmd: '/forget-approvals',
+      glyph: '🔒',
+      glyphColor: 'text-zinc-400',
+      description: 'Hatırlanan tüm dosya ve klasör izin onaylarını sıfırlar',
+      category: 'tools',
+    },
+    {
+      id: 'extensions',
+      name: 'extensions',
+      fullCmd: '/extensions',
+      glyph: '🧩',
+      glyphColor: 'text-cyan-400',
+      description: 'Eklenti ve uzantı durum merkezini açar (/extensions)',
+      category: 'tools',
+    },
+    {
+      id: 'agents',
+      name: 'agents',
+      fullCmd: '/agents',
+      glyph: '🤖',
+      glyphColor: 'text-indigo-400',
+      description: 'Ajan merkezini ve subagent modellerini görüntüler (/agents)',
+      category: 'tools',
+    },
+
+    // 9. Telemetry, Settings & System
+    {
+      id: 'usage',
+      name: 'usage',
+      fullCmd: '/usage',
+      glyph: '⚡',
+      glyphColor: 'text-amber-400 font-bold',
+      description: 'Canlı model kotalarını ve hız sınırlarını görüntüler (/usage [show|reset])',
+      category: 'telemetry',
+      subcommands: [
+        { name: 'show', description: 'Canlı sağlayıcı kotalarını göster' },
+        { name: 'reset', description: 'Kayıtlı hız sınırı sıfırlamasını harca' },
+      ],
+    },
+    {
+      id: 'stats',
+      name: 'stats',
+      fullCmd: '/stats',
+      glyph: '📊',
+      glyphColor: 'text-amber-400',
+      description: 'Detaylı kullanım istatistikleri ve telemetri paneli (/stats)',
+      category: 'telemetry',
+    },
+    {
+      id: 'changelog',
+      name: 'changelog',
+      fullCmd: '/changelog',
+      glyph: '📰',
+      glyphColor: 'text-emerald-400 font-bold',
+      description: 'oh-my-pi resmi sürüm notları ve değişiklik geçmişi (/changelog [full|last N])',
+      category: 'telemetry',
+      subcommands: [
+        { name: 'full', description: 'Tüm sürüm notlarını eksiksiz göster' },
+        { name: 'last', description: 'Son N sürümün notlarını göster', usage: '[N]' },
+      ],
+    },
+    {
+      id: 'context',
+      name: 'context',
+      fullCmd: '/context',
+      glyph: '📏',
+      glyphColor: 'text-purple-400',
+      description: 'Mevcut konuşma token ve bağlam kullanım dökümünü gösterir',
+      category: 'telemetry',
+    },
+    {
+      id: 'tools',
+      name: 'tools',
+      fullCmd: '/tools',
+      glyph: '🛠',
+      glyphColor: 'text-cyan-400',
+      description: 'Ajana görünür ve etkin olan tüm araçları listeler',
+      category: 'telemetry',
     },
     {
       id: 'settings',
@@ -997,6 +1690,7 @@ export const AgentStudio: React.FC<AgentStudioProps> = ({
       glyph: '⚙',
       glyphColor: 'text-zinc-300 font-bold',
       description: 'Sistem ayarlarını ve sağlayıcı kimlik doğrulamasını (/login) açar',
+      category: 'telemetry',
     },
     {
       id: 'setup',
@@ -1005,6 +1699,10 @@ export const AgentStudio: React.FC<AgentStudioProps> = ({
       glyph: '⚙',
       glyphColor: 'text-zinc-300',
       description: 'Model sağlayıcı ve web arama yapılandırmasını açar (/setup providers)',
+      category: 'telemetry',
+      subcommands: [
+        { name: 'providers', description: 'Giriş ve web arama sağlayıcılarını yapılandır' },
+      ],
     },
     {
       id: 'hotkeys',
@@ -1013,6 +1711,7 @@ export const AgentStudio: React.FC<AgentStudioProps> = ({
       glyph: '⌨',
       glyphColor: 'text-zinc-300',
       description: 'Tüm klavye kısayollarını gösterir',
+      category: 'telemetry',
     },
     {
       id: 'help',
@@ -1021,6 +1720,21 @@ export const AgentStudio: React.FC<AgentStudioProps> = ({
       glyph: 'ℹ',
       glyphColor: 'text-cyan-400 font-bold',
       description: 'Tüm komutlar ve kısayollar kılavuzunu görüntüler',
+      category: 'telemetry',
+    },
+    {
+      id: 'update',
+      name: 'update',
+      fullCmd: '/update',
+      glyph: '🔄',
+      glyphColor: 'text-emerald-400',
+      description: 'oh-my-pi güncellemelerini denetler ve yükler (/update [-c|-f|--canary])',
+      category: 'telemetry',
+      subcommands: [
+        { name: '--check', description: 'Güncellemeleri yüklemeden kontrol et' },
+        { name: '--force', description: 'Güncellemeyi zorla yeniden yükle' },
+        { name: '--canary', description: 'Canary kanalına geç ve güncelle' },
+      ],
     },
     {
       id: 'restart',
@@ -1029,6 +1743,7 @@ export const AgentStudio: React.FC<AgentStudioProps> = ({
       glyph: '↻',
       glyphColor: 'text-amber-400',
       description: 'Uygulamayı mevcut oturumu devam ettirerek yeniden başlatır',
+      category: 'telemetry',
     },
     {
       id: 'exit',
@@ -1036,16 +1751,111 @@ export const AgentStudio: React.FC<AgentStudioProps> = ({
       fullCmd: '/exit',
       glyph: '⏻',
       glyphColor: 'text-red-400',
-      description: 'Uygulamadan çıkar',
+      description: 'Uygulamadan çıkar (/exit, /quit, /q)',
+      category: 'telemetry',
     },
   ], [skillsList, selectedModel, advisor, goalMode, loopMode, planYolo, thinkingLevel]);
 
+  const executeOmpCli = useCallback(
+    (subcommand: string, rawArgsStr = '', displayCmd?: string) => {
+      const rawArgs = rawArgsStr ? rawArgsStr.match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g) || [] : [];
+      const cleanArgs = rawArgs.map((a) => a.replace(/^["']|["']$/g, ''));
+
+      if (onAddSystemMessage) {
+        onAddSystemMessage({
+          id: 'usr_' + Date.now(),
+          role: 'user',
+          text: displayCmd || `/${subcommand}${rawArgsStr ? ' ' + rawArgsStr : ''}`,
+          timestamp: new Date().toISOString(),
+        });
+      }
+
+      AppApi.RunOmpCliCommand(subcommand, cleanArgs, cwd)
+        .then((res) => {
+          if (onAddSystemMessage) {
+            onAddSystemMessage({
+              id: 'sys_' + Date.now(),
+              role: 'system',
+              text: res.output || res.error || 'İşlem tamamlandı.',
+              timestamp: new Date().toISOString(),
+              command: res.command,
+              exitCode: res.exitCode,
+              cliResult: {
+                command: res.command,
+                output: res.output,
+                exitCode: res.exitCode,
+                error: res.error,
+              },
+            });
+          }
+        })
+        .catch((err: unknown) => {
+          if (onAddSystemMessage) {
+            onAddSystemMessage({
+              id: 'sys_' + Date.now(),
+              role: 'system',
+              text: `Hata: ${String(err)}`,
+              timestamp: new Date().toISOString(),
+              command: `omp ${subcommand}`,
+              exitCode: 1,
+              cliResult: {
+                command: `omp ${subcommand}`,
+                output: '',
+                exitCode: 1,
+                error: String(err),
+              },
+            });
+          }
+        });
+    },
+    [cwd, onAddSystemMessage]
+  );
+
   const filteredCommands: CommandItem[] = useMemo(() => {
     if (!prompt.startsWith('/')) return [];
-    const query = prompt.toLowerCase().trim();
 
-    if (query.startsWith('/skill:')) {
-      const skillQuery = query.slice(7);
+    // Check if user has entered a space after the root command: e.g. "/todo " or "/mcp list"
+    const firstSpaceIndex = prompt.indexOf(' ');
+    if (firstSpaceIndex !== -1) {
+      const baseName = prompt.slice(1, firstSpaceIndex).toLowerCase().trim();
+      const afterSpace = prompt.slice(firstSpaceIndex + 1);
+      const subQuery = afterSpace.trim().toLowerCase();
+
+      const parent = baseCommands.find(
+        (c) => c.name.toLowerCase() === baseName || c.id === baseName
+      );
+
+      if (parent && parent.subcommands && parent.subcommands.length > 0) {
+        // If user already typed a subcommand and pressed space (e.g. "/marketplace list "), close popover
+        if (afterSpace.includes(' ')) {
+          return [];
+        }
+
+        return parent.subcommands
+          .filter(
+            (sub) =>
+              !subQuery ||
+              sub.name.toLowerCase().includes(subQuery) ||
+              (sub.description && sub.description.toLowerCase().includes(subQuery))
+          )
+          .map((sub) => ({
+            id: `${parent.id}-${sub.name}`,
+            name: `${parent.name} ${sub.name}`,
+            fullCmd: `/${parent.name} ${sub.name}${sub.usage ? ' ' : ''}`,
+            glyph: parent.glyph,
+            glyphColor: parent.glyphColor,
+            description: sub.usage ? `${sub.description} (${sub.usage})` : sub.description,
+          }));
+      }
+
+      // If parent has no subcommands, close autocomplete immediately!
+      return [];
+    }
+
+    // No space yet: user is typing the command name (e.g. "/rec" or "/todo")
+    const raw = prompt.trim();
+    if (raw.toLowerCase().startsWith('/skill:')) {
+      const skillQuery = raw.slice(7).toLowerCase();
       return skillsList
         .filter((s) => !skillQuery || s.name.toLowerCase().includes(skillQuery))
         .map((s) => ({
@@ -1058,10 +1868,13 @@ export const AgentStudio: React.FC<AgentStudioProps> = ({
         }));
     }
 
-    const commandQuery = query.slice(1);
+    const commandQuery = raw.slice(1).toLowerCase();
     return baseCommands.filter((cmd) => {
       if (!commandQuery) return true;
-      return cmd.name.toLowerCase().includes(commandQuery) || cmd.description.toLowerCase().includes(commandQuery);
+      return (
+        cmd.name.toLowerCase().includes(commandQuery) ||
+        (cmd.description && cmd.description.toLowerCase().includes(commandQuery))
+      );
     });
   }, [prompt, baseCommands, skillsList]);
 
@@ -1086,12 +1899,17 @@ export const AgentStudio: React.FC<AgentStudioProps> = ({
       setPrompt('');
       return;
     }
-    if (cmd.id === 'settings') {
-      if (onOpenSettings) onOpenSettings();
+    if (cmd.id === 'settings' || cmd.id === 'setup' || cmd.id === 'providers') {
+      if (onOpenSettings) onOpenSettings('general');
       setPrompt('');
       return;
     }
-    if (cmd.id === 'devtools') {
+    if (cmd.id === 'login' || cmd.id === 'logout') {
+      if (onOpenSettings) onOpenSettings('auth');
+      setPrompt('');
+      return;
+    }
+    if (cmd.id === 'devtools' || cmd.id === 'cleanse') {
       if (onOpenDevTools) onOpenDevTools();
       setPrompt('');
       return;
@@ -1103,6 +1921,167 @@ export const AgentStudio: React.FC<AgentStudioProps> = ({
     }
     if (cmd.id === 'compact') {
       handleCompact();
+      setPrompt('');
+      return;
+    }
+    if (cmd.id === 'record') {
+      const nextRec = !isRecording;
+      setIsRecording(nextRec);
+      if (onAddSystemMessage) {
+        onAddSystemMessage({
+          id: 'sys_' + Date.now(),
+          role: 'system',
+          text: nextRec
+            ? '⏺ Replay kaydı başlatıldı (oturum replay dosyasına kaydediliyor).'
+            : '⏹ Replay kaydı durduruldu. Replay dosyası kaydedildi.',
+          timestamp: new Date().toISOString(),
+        });
+      }
+      setPrompt('');
+      return;
+    }
+    if (cmd.id === 'vibe') {
+      if (onAddSystemMessage) {
+        onAddSystemMessage({
+          id: 'sys_' + Date.now(),
+          role: 'system',
+          text: '🔮 Vibe Modu: Hızlı ve salt-okunur araç seti devrede.',
+          timestamp: new Date().toISOString(),
+        });
+      }
+      setPrompt('');
+      return;
+    }
+    if (cmd.id === 'ratchet') {
+      if (onAddSystemMessage) {
+        onAddSystemMessage({
+          id: 'sys_' + Date.now(),
+          role: 'system',
+          text: '⚙ Ratchet Modu: LLM adımları kontrollü yürütülecek.',
+          timestamp: new Date().toISOString(),
+        });
+      }
+      setPrompt('');
+      return;
+    }
+    if (cmd.id === 'computer') {
+      AppApi.GetConfigKey('computer.enabled')
+        .then((currVal) => {
+          const nextVal = currVal !== 'true';
+          AppApi.SetConfigKey('computer.enabled', nextVal ? 'true' : 'false').catch(console.error);
+          if (onAddSystemMessage) {
+            onAddSystemMessage({
+              id: 'sys_' + Date.now(),
+              role: 'system',
+              text: nextVal
+                ? '🖥 Computer Use (Masaüstü Kontrolü): AKTİF EDİLDİ (computer.enabled = true). Destekleyen modeller ekranı okuyabilir ve kontrol edebilir.'
+                : '🖥 Computer Use: DEVRE DIŞI (computer.enabled = false).',
+              timestamp: new Date().toISOString(),
+            });
+          }
+        })
+        .catch(console.error);
+      setPrompt('');
+      return;
+    }
+    if (cmd.id === 'fast') {
+      setThinkingLevel('off');
+      if (onAddSystemMessage) {
+        onAddSystemMessage({
+          id: 'sys_' + Date.now(),
+          role: 'system',
+          text: '⚡ Hızlı Mod: Düşünme seviyesi kapatıldı (thinking: off).',
+          timestamp: new Date().toISOString(),
+        });
+      }
+      setPrompt('');
+      return;
+    }
+    if (cmd.id === 'slow') {
+      setThinkingLevel('max');
+      if (onAddSystemMessage) {
+        onAddSystemMessage({
+          id: 'sys_' + Date.now(),
+          role: 'system',
+          text: '🧠 Derin Düşünme Modu: Düşünme seviyesi en yükseğe çıkarıldı (thinking: max).',
+          timestamp: new Date().toISOString(),
+        });
+      }
+      setPrompt('');
+      return;
+    }
+    if (cmd.id === 'prewalk') {
+      const next = !prewalk;
+      setPrewalk(next);
+      if (onAddSystemMessage) {
+        onAddSystemMessage({
+          id: 'sys_' + Date.now(),
+          role: 'system',
+          text: `🚶 Prewalk: ${next ? 'Açık' : 'Kapalı'}.`,
+          timestamp: new Date().toISOString(),
+        });
+      }
+      setPrompt('');
+      return;
+    }
+    if (cmd.id === 'pause') {
+      if (onAddSystemMessage) {
+        onAddSystemMessage({
+          id: 'sys_' + Date.now(),
+          role: 'system',
+          text: '⏸ Ajan süreçleri duraklatıldı.',
+          timestamp: new Date().toISOString(),
+        });
+      }
+      setPrompt('');
+      return;
+    }
+    if (cmd.id === 'force') {
+      if (onAddSystemMessage) {
+        onAddSystemMessage({
+          id: 'sys_' + Date.now(),
+          role: 'system',
+          text: '⚡ Tüm araçlar sonraki yanıt için zorunlu kılındı (Force Tools).',
+          timestamp: new Date().toISOString(),
+        });
+      }
+      setPrompt('');
+      return;
+    }
+    if (cmd.id === 'forget-approvals') {
+      if (onAddSystemMessage) {
+        onAddSystemMessage({
+          id: 'sys_' + Date.now(),
+          role: 'system',
+          text: '🗑 Önceden onaylanan tüm araç izinleri sıfırlandı.',
+          timestamp: new Date().toISOString(),
+        });
+      }
+      setPrompt('');
+      return;
+    }
+    if (cmd.id === 'exit' || cmd.id === 'quit' || cmd.id === 'q') {
+      if (onAddSystemMessage) {
+        onAddSystemMessage({
+          id: 'sys_' + Date.now(),
+          role: 'system',
+          text: '⏻ Oturum sonlandırıldı.',
+          timestamp: new Date().toISOString(),
+        });
+      }
+      setPrompt('');
+      return;
+    }
+    if (cmd.id === 'restart') {
+      if (onClearConsole) onClearConsole();
+      if (onAddSystemMessage) {
+        onAddSystemMessage({
+          id: 'sys_' + Date.now(),
+          role: 'system',
+          text: '🔄 Oturum yeniden başlatıldı.',
+          timestamp: new Date().toISOString(),
+        });
+      }
       setPrompt('');
       return;
     }
@@ -1139,16 +2118,6 @@ export const AgentStudio: React.FC<AgentStudioProps> = ({
       setPrompt('');
       return;
     }
-    if (cmd.id === 'setup' || cmd.id === 'providers') {
-      if (onOpenSettings) onOpenSettings();
-      setPrompt('');
-      return;
-    }
-    if (cmd.id === 'cleanse') {
-      if (onOpenDevTools) onOpenDevTools();
-      setPrompt('');
-      return;
-    }
     if (cmd.name === 'skill:') {
       setPrompt('/skill:');
       return;
@@ -1156,7 +2125,23 @@ export const AgentStudio: React.FC<AgentStudioProps> = ({
     if (cmd.onSelect) {
       cmd.onSelect();
     }
-    setPrompt(cmd.fullCmd + ' ');
+    // If the command has subcommands and user picked root: append space so subcommands pop up!
+    if (cmd.subcommands && cmd.subcommands.length > 0 && !cmd.fullCmd.includes(' ')) {
+      setPrompt(cmd.fullCmd + ' ');
+      return;
+    }
+    // If it's a subcommand without extra required arguments (e.g. "/marketplace list", "/todo list", "/mcp list"):
+    if (cmd.fullCmd.includes(' ') && !cmd.fullCmd.endsWith(' ')) {
+      handleSubmit(undefined, cmd.fullCmd);
+      return;
+    }
+    // If it's a CLI tool with no arguments needed (e.g. ps, gc, jobs):
+    if (CLI_COMMAND_LOOKUP[cmd.id] && (!cmd.subcommands || cmd.subcommands.length === 0)) {
+      executeOmpCli(cmd.id);
+      setPrompt('');
+      return;
+    }
+    setPrompt(cmd.fullCmd + (cmd.fullCmd.endsWith(' ') ? '' : ' '));
   };
 
 
@@ -1294,12 +2279,11 @@ export const AgentStudio: React.FC<AgentStudioProps> = ({
     }
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
+  function handleSubmit(e?: React.FormEvent, overrideText?: string) {
+    if (e) e.preventDefault();
     if (isWorking) return;
-    const trimmed = prompt.trim();
+    const trimmed = (overrideText !== undefined ? overrideText : prompt).trim();
     if (!trimmed && attachedFiles.length === 0) return;
-    // Intercept all slash commands
     // 1. /clear & /new
     if (trimmed === '/clear' || trimmed === '/new') {
       if (onClearConsole) onClearConsole();
@@ -1323,33 +2307,45 @@ export const AgentStudio: React.FC<AgentStudioProps> = ({
 
     // 4. /settings
     if (trimmed === '/settings') {
-      if (onOpenSettings) onOpenSettings();
+      if (onOpenSettings) onOpenSettings('general');
       setPrompt('');
       return;
     }
 
-    // 5. /devtools
+    // 5. /login, /logout, /setup, /providers
+    if (
+      trimmed.startsWith('/login') ||
+      trimmed.startsWith('/logout') ||
+      trimmed === '/setup' ||
+      trimmed === '/providers'
+    ) {
+      if (onOpenSettings) onOpenSettings('auth');
+      setPrompt('');
+      return;
+    }
+
+    // 6. /devtools
     if (trimmed === '/devtools') {
       if (onOpenDevTools) onOpenDevTools();
       setPrompt('');
       return;
     }
 
-    // 6. /resume
+    // 7. /resume
     if (trimmed === '/resume') {
       if (onOpenSessions) onOpenSessions();
       setPrompt('');
       return;
     }
 
-    // 7. /help & /hotkeys
+    // 8. /help & /hotkeys
     if (trimmed === '/help' || trimmed === '/hotkeys') {
       setShowHelpModal(true);
       setPrompt('');
       return;
     }
 
-    // 8. /changelog
+    // 9. /changelog
     if (trimmed.startsWith('/changelog')) {
       const parts = trimmed.split(/\s+/);
       if (parts[1]?.toLowerCase() === 'full') {
@@ -1362,58 +2358,69 @@ export const AgentStudio: React.FC<AgentStudioProps> = ({
       return;
     }
 
-    // 9. /goal
+    // 10. /goal
     if (trimmed.startsWith('/goal')) {
       const parts = trimmed.split(/\s+/);
       const action = parts[1]?.toLowerCase();
-      if (action === 'on' || action === '1' || action === 'enable' || action === 'set') {
-        setGoalMode(true);
-      } else if (action === 'off' || action === '0' || action === 'disable' || action === 'drop' || action === 'pause') {
-        setGoalMode(false);
-      } else {
-        setGoalMode(!goalMode);
+      const next =
+        action === 'on' || action === '1' || action === 'enable' || action === 'set'
+          ? true
+          : action === 'off' || action === '0' || action === 'disable' || action === 'drop' || action === 'pause'
+          ? false
+          : !goalMode;
+      setGoalMode(next);
+      if (onAddSystemMessage) {
+        onAddSystemMessage({
+          id: 'sys_' + Date.now(),
+          role: 'system',
+          text: next ? '🎯 Hedef Modu (Goal Mode) AKTİF edildi.' : '🎯 Hedef Modu PASİF edildi.',
+          timestamp: new Date().toISOString(),
+        });
       }
       setPrompt('');
       return;
     }
 
-    // 10. /loop
+    // 11. /loop
     if (trimmed.startsWith('/loop')) {
       const parts = trimmed.split(/\s+/);
       const action = parts[1]?.toLowerCase();
-      if (action === 'on' || action === '1' || action === 'enable') {
-        setLoopMode(true);
-      } else if (action === 'off' || action === '0' || action === 'disable') {
-        setLoopMode(false);
-      } else {
-        setLoopMode(!loopMode);
+      const next =
+        action === 'on' || action === '1' || action === 'enable'
+          ? true
+          : action === 'off' || action === '0' || action === 'disable'
+          ? false
+          : !loopMode;
+      setLoopMode(next);
+      if (onAddSystemMessage) {
+        onAddSystemMessage({
+          id: 'sys_' + Date.now(),
+          role: 'system',
+          text: next ? '↺ Döngü Modu (Loop Mode) AKTİF edildi.' : '↺ Döngü Modu PASİF edildi.',
+          timestamp: new Date().toISOString(),
+        });
       }
       setPrompt('');
       return;
     }
 
-    // 11. /plan
+    // 12. /plan
     if (trimmed.startsWith('/plan')) {
-      setPlanYolo(!planYolo);
+      const next = !planYolo;
+      setPlanYolo(next);
+      if (onAddSystemMessage) {
+        onAddSystemMessage({
+          id: 'sys_' + Date.now(),
+          role: 'system',
+          text: next ? '📋 Plan Modu (Plan Mode) AKTİF edildi.' : '📋 Plan Modu PASİF edildi.',
+          timestamp: new Date().toISOString(),
+        });
+      }
       setPrompt('');
       return;
     }
 
-    // 12. /setup & /providers
-    if (trimmed === '/setup' || trimmed === '/providers') {
-      if (onOpenSettings) onOpenSettings();
-      setPrompt('');
-      return;
-    }
-
-    // 13. /cleanse
-    if (trimmed === '/cleanse') {
-      if (onOpenDevTools) onOpenDevTools();
-      setPrompt('');
-      return;
-    }
-
-    // 9. /model
+    // 13. /model
     if (trimmed === '/model') {
       setShowRoleWizard(true);
       setPrompt('');
@@ -1426,31 +2433,875 @@ export const AgentStudio: React.FC<AgentStudioProps> = ({
       );
       if (found) {
         onSelectModel(found.id);
+        if (onAddSystemMessage) {
+          onAddSystemMessage({
+            id: 'sys_' + Date.now(),
+            role: 'system',
+            text: `🧠 Aktif model: ${found.name || found.id} olarak seçildi.`,
+            timestamp: new Date().toISOString(),
+          });
+        }
       }
       setPrompt('');
       return;
     }
 
-    // 10. /advisor
+    // 14. /advisor
     if (trimmed.startsWith('/advisor')) {
       const parts = trimmed.split(/\s+/);
       const action = parts[1]?.toLowerCase();
-      if (action === 'on' || action === '1' || action === 'enable') {
-        setAdvisor(true);
-        AppApi.SetAdvisorEnabled(true).catch(console.error);
-      } else if (action === 'off' || action === '0' || action === 'disable') {
-        setAdvisor(false);
-        AppApi.SetAdvisorEnabled(false).catch(console.error);
-      } else {
-        const next = !advisor;
-        setAdvisor(next);
-        AppApi.SetAdvisorEnabled(next).catch(console.error);
+      const next =
+        action === 'on' || action === '1' || action === 'enable'
+          ? true
+          : action === 'off' || action === '0' || action === 'disable'
+          ? false
+          : !advisor;
+      setAdvisor(next);
+      AppApi.SetAdvisorEnabled(next).catch(console.error);
+      if (onAddSystemMessage) {
+        onAddSystemMessage({
+          id: 'sys_' + Date.now(),
+          role: 'system',
+          text: next ? '👁 Pasif Danışman (Advisor) AKTİF edildi.' : '👁 Pasif Danışman PASİF edildi.',
+          timestamp: new Date().toISOString(),
+        });
       }
       setPrompt('');
       return;
     }
 
-    // 11. /compact
+    // 15. /effort
+    if (trimmed.startsWith('/effort')) {
+      const parts = trimmed.split(/\s+/);
+      const target = parts[1]?.toLowerCase();
+      const valid = ['off', 'minimal', 'low', 'medium', 'high', 'max', 'auto'];
+      const nextEffort = target && valid.includes(target)
+        ? target
+        : valid[(valid.indexOf(thinkingLevel) + 1) % valid.length];
+      setThinkingLevel(nextEffort);
+      AppApi.SetConfigKey('defaultThinkingLevel', nextEffort).catch(console.error);
+      if (onAddSystemMessage) {
+        onAddSystemMessage({
+          id: 'sys_' + Date.now(),
+          role: 'system',
+          text: `⚡ Düşünme Seviyesi (Reasoning Effort): ${nextEffort.toUpperCase()} olarak güncellendi.`,
+          timestamp: new Date().toISOString(),
+        });
+      }
+      setPrompt('');
+      return;
+    }
+
+    // 16. /fast
+    if (trimmed.startsWith('/fast')) {
+      const parts = trimmed.split(/\s+/);
+      const action = parts[1]?.toLowerCase() || 'toggle';
+      if (onAddSystemMessage) {
+        onAddSystemMessage({
+          id: 'sys_' + Date.now(),
+          role: 'system',
+          text: `⚡ Hızlı Mod (Fast Tier): ${action.toUpperCase()} ayarlandı.`,
+          timestamp: new Date().toISOString(),
+        });
+      }
+      setPrompt('');
+      return;
+    }
+
+    // 17. /slow
+    if (trimmed.startsWith('/slow')) {
+      const parts = trimmed.split(/\s+/);
+      const action = parts[1]?.toLowerCase() || 'toggle';
+      if (onAddSystemMessage) {
+        onAddSystemMessage({
+          id: 'sys_' + Date.now(),
+          role: 'system',
+          text: `⏳ Yavaş / Flex Mod (Slow Tier): ${action.toUpperCase()} ayarlandı.`,
+          timestamp: new Date().toISOString(),
+        });
+      }
+      setPrompt('');
+      return;
+    }
+
+    // 18. /update
+    if (trimmed.startsWith('/update')) {
+      if (onAddSystemMessage) {
+        onAddSystemMessage({
+          id: 'sys_' + Date.now(),
+          role: 'system',
+          text: '🔄 Güncellemeler denetleniyor...',
+          timestamp: new Date().toISOString(),
+        });
+      }
+      AppApi.CheckForUpdates()
+        .then((st) => {
+          if (onAddSystemMessage) {
+            onAddSystemMessage({
+              id: 'sys_' + Date.now(),
+              role: 'system',
+              text: st.hasUpdate
+                ? `⚡ Yeni sürüm mevcut: ${st.latestVersion} (Mevcut: ${st.currentVersion}).`
+                : `✓ omp en güncel sürümde: ${st.currentVersion}.`,
+              timestamp: new Date().toISOString(),
+            });
+          }
+        })
+        .catch((err: unknown) => {
+          if (onAddSystemMessage) {
+            onAddSystemMessage({
+              id: 'sys_' + Date.now(),
+              role: 'system',
+              text: `Güncelleme hatası: ${String(err)}`,
+              timestamp: new Date().toISOString(),
+            });
+          }
+        });
+      setPrompt('');
+      return;
+    }
+
+    // 19. /exit, /quit, /q
+    if (trimmed === '/exit' || trimmed === '/quit' || trimmed === '/q') {
+      if (onAddSystemMessage) {
+        onAddSystemMessage({
+          id: 'sys_' + Date.now(),
+          role: 'system',
+          text: '⏻ Oturum sonlandırıldı.',
+          timestamp: new Date().toISOString(),
+        });
+      }
+      setPrompt('');
+      return;
+    }
+
+    // /record
+    if (trimmed === '/record' || trimmed.startsWith('/record ')) {
+      const nextRec = !isRecording;
+      setIsRecording(nextRec);
+      if (onAddSystemMessage) {
+        onAddSystemMessage({
+          id: 'sys_' + Date.now(),
+          role: 'system',
+          text: nextRec
+            ? '⏺ Replay kaydı başlatıldı (oturum replay dosyasına kaydediliyor).'
+            : '⏹ Replay kaydı durduruldu. Replay dosyası kaydedildi.',
+          timestamp: new Date().toISOString(),
+        });
+      }
+      setPrompt('');
+      return;
+    }
+
+    // /vibe
+    if (trimmed.startsWith('/vibe')) {
+      if (onAddSystemMessage) {
+        onAddSystemMessage({
+          id: 'sys_' + Date.now(),
+          role: 'system',
+          text: '🔮 Vibe Modu: Hızlı ve salt-okunur araç seti devrede.',
+          timestamp: new Date().toISOString(),
+        });
+      }
+      setPrompt('');
+      return;
+    }
+
+    // /ratchet
+    if (trimmed.startsWith('/ratchet')) {
+      if (onAddSystemMessage) {
+        onAddSystemMessage({
+          id: 'sys_' + Date.now(),
+          role: 'system',
+          text: '⚙ Ratchet Modu: LLM adımları kontrollü yürütülecek.',
+          timestamp: new Date().toISOString(),
+        });
+      }
+      setPrompt('');
+      return;
+    }
+
+    // /computer [on|off|status]
+    if (trimmed.startsWith('/computer')) {
+      const parts = trimmed.split(/\s+/);
+      const action = parts[1]?.toLowerCase();
+      AppApi.GetConfigKey('computer.enabled')
+        .then((currVal) => {
+          let nextVal = currVal === 'true';
+          if (action === 'on' || action === '1' || action === 'enable') {
+            nextVal = true;
+          } else if (action === 'off' || action === '0' || action === 'disable') {
+            nextVal = false;
+          } else if (action === 'status') {
+            // Keep current value
+          } else {
+            nextVal = !nextVal;
+          }
+
+          if (action !== 'status') {
+            AppApi.SetConfigKey('computer.enabled', nextVal ? 'true' : 'false').catch(console.error);
+          }
+
+          if (onAddSystemMessage) {
+            onAddSystemMessage({
+              id: 'sys_' + Date.now(),
+              role: 'system',
+              text: nextVal
+                ? '🖥 Computer Use (Masaüstü Kontrolü): AKTİF (computer.enabled = true). Destekleyen modeller ekranı okuyabilir, fare ve klavye girdisi gönderebilir.'
+                : '🖥 Computer Use: DEVRE DIŞI (computer.enabled = false).',
+              timestamp: new Date().toISOString(),
+            });
+          }
+        })
+        .catch((err: unknown) => {
+          if (onAddSystemMessage) {
+            onAddSystemMessage({
+              id: 'sys_' + Date.now(),
+              role: 'system',
+              text: `Computer Use ayarı okunamadı: ${String(err)}`,
+              timestamp: new Date().toISOString(),
+            });
+          }
+        });
+      setPrompt('');
+      return;
+    }
+
+    // /todo [list|append|start|done|drop|rm|copy|export|import|edit|help]
+    if (trimmed === '/todo' || trimmed.startsWith('/todo ') || trimmed.startsWith('/todo:')) {
+      const rawRest = trimmed.replace(/^\/todo(?::\w+)?\s*/, '').trim();
+      const parts = rawRest.split(/\s+/);
+      const sub = parts[0]?.toLowerCase() || 'list';
+      const arg = parts.slice(1).join(' ').trim();
+
+      const current = [...todoPhases];
+
+      const persist = (next: TodoPhaseItem[]) => {
+        setTodoPhases(next);
+        try {
+          localStorage.setItem(`omp_todos_${sessionId || 'default'}`, JSON.stringify(next));
+        } catch (e) {
+          console.error('Failed to save todos:', e);
+        }
+      };
+
+      if (sub === 'help') {
+        if (onAddSystemMessage) {
+          onAddSystemMessage({
+            id: 'sys_' + Date.now(),
+            role: 'system',
+            text: [
+              '☑ Görev Listesi (Todo) Komutları:',
+              '  /todo                                  - Görev listesini görüntüler',
+              '  /todo append [<faz>] <görev...>       - Yeni bir görev ekler',
+              '  /todo start <görev>                    - Görevi devam ediyor olarak işaretler',
+              '  /todo done [<görev|faz>]               - Görevi veya tüm listeyi tamamlandı yapar',
+              '  /todo drop [<görev|faz>]               - Görevi iptal edildi olarak işaretler',
+              '  /todo rm [<görev|faz>]                 - Görevi veya tüm listeyi siler',
+              '  /todo copy                             - Görevleri Markdown olarak panoya kopyalar',
+              '  /todo export [<dosya_yolu>]            - TODO.md dosyasına aktarır',
+              '  /todo import [<dosya_yolu>]            - TODO.md dosyasından içe aktarır',
+              '  /todo edit                             - TODO.md dosyasına eşitler ve düzenleme yönergelerini açar',
+            ].join('\n'),
+            timestamp: new Date().toISOString(),
+          });
+        }
+        setPrompt('');
+        return;
+      }
+
+      if (sub === 'copy') {
+        const md = phasesToMarkdown(current);
+        if (!md) {
+          if (onAddSystemMessage) {
+            onAddSystemMessage({
+              id: 'sys_' + Date.now(),
+              role: 'system',
+              text: '📋 Görev listesi boş. Kopyalanacak görev bulunamadı.',
+              timestamp: new Date().toISOString(),
+            });
+          }
+        } else {
+          navigator.clipboard.writeText(md);
+          if (onAddSystemMessage) {
+            onAddSystemMessage({
+              id: 'sys_' + Date.now(),
+              role: 'system',
+              text: '📋 Görev listesi Markdown formatında panoya kopyalandı.',
+              timestamp: new Date().toISOString(),
+            });
+          }
+        }
+        setPrompt('');
+        return;
+      }
+
+      if (sub === 'export') {
+        const targetPath = arg
+          ? (arg.includes(':') || arg.startsWith('/') ? arg : (cwd ? `${cwd}/${arg}` : arg))
+          : (cwd ? `${cwd}/TODO.md` : 'TODO.md');
+        const md = phasesToMarkdown(current);
+        AppApi.WriteWorkspaceFile(targetPath, md || '# TODOs\n\n- [ ] Henüz görev yok\n')
+          .then(() => {
+            if (onAddSystemMessage) {
+              onAddSystemMessage({
+                id: 'sys_' + Date.now(),
+                role: 'system',
+                text: `💾 Görevler başarıyla dosyaya kaydedildi:\n\`${targetPath}\``,
+                timestamp: new Date().toISOString(),
+              });
+            }
+          })
+          .catch((err: unknown) => {
+            if (onAddSystemMessage) {
+              onAddSystemMessage({
+                id: 'sys_' + Date.now(),
+                role: 'system',
+                text: `Dosya yazma hatası: ${String(err)}`,
+                timestamp: new Date().toISOString(),
+              });
+            }
+          });
+        setPrompt('');
+        return;
+      }
+
+      if (sub === 'import') {
+        const targetPath = arg
+          ? (arg.includes(':') || arg.startsWith('/') ? arg : (cwd ? `${cwd}/${arg}` : arg))
+          : (cwd ? `${cwd}/TODO.md` : 'TODO.md');
+        AppApi.ReadWorkspaceFile(targetPath)
+          .then((content) => {
+            const imported = markdownToPhases(content);
+            persist(imported);
+            const count = imported.reduce((sum, p) => sum + p.tasks.length, 0);
+            if (onAddSystemMessage) {
+              onAddSystemMessage({
+                id: 'sys_' + Date.now(),
+                role: 'system',
+                text: `📥 \`${targetPath}\` dosyasından ${imported.length} faz ve ${count} görev başarıyla içe aktarıldı.`,
+                timestamp: new Date().toISOString(),
+              });
+            }
+          })
+          .catch((err: unknown) => {
+            if (onAddSystemMessage) {
+              onAddSystemMessage({
+                id: 'sys_' + Date.now(),
+                role: 'system',
+                text: `Dosya okunamadı: ${String(err)}`,
+                timestamp: new Date().toISOString(),
+              });
+            }
+          });
+        setPrompt('');
+        return;
+      }
+
+      if (sub === 'edit') {
+        const targetPath = cwd ? `${cwd}/TODO.md` : 'TODO.md';
+        const md = phasesToMarkdown(current);
+        AppApi.WriteWorkspaceFile(targetPath, md || '# TODOs\n\n- [ ] İlk görev\n')
+          .then(() => {
+            if (onAddSystemMessage) {
+              onAddSystemMessage({
+                id: 'sys_' + Date.now(),
+                role: 'system',
+                text: [
+                  '📝 **Todo Listesi Düzenleyici:**',
+                  `Görevler proje dizinindeki \`${targetPath}\` dosyasına senkronize edildi.`,
+                  '',
+                  'Dosyayı istediğiniz editörde düzenledikten sonra:',
+                  '👉 `/todo import` yazarak güncellemeleri anında uygulamaya geri yükleyebilirsiniz.',
+                ].join('\n'),
+                timestamp: new Date().toISOString(),
+              });
+            }
+          })
+          .catch((err: unknown) => {
+            if (onAddSystemMessage) {
+              onAddSystemMessage({
+                id: 'sys_' + Date.now(),
+                role: 'system',
+                text: `TODO.md dosyası oluşturulamadı: ${String(err)}`,
+                timestamp: new Date().toISOString(),
+              });
+            }
+          });
+        setPrompt('');
+        return;
+      }
+
+      if (sub === 'append') {
+        if (!arg) {
+          if (onAddSystemMessage) {
+            onAddSystemMessage({
+              id: 'sys_' + Date.now(),
+              role: 'system',
+              text: '⚠️ Lütfen eklenecek görevi belirtin: `/todo append [<faz>] <görev...>`',
+              timestamp: new Date().toISOString(),
+            });
+          }
+          setPrompt('');
+          return;
+        }
+
+        const tokens = arg.split(/\s+/);
+        let phaseName = 'Görevler';
+        let taskText = arg;
+        if (tokens.length >= 2 && tokens[0].startsWith('[') && tokens[0].endsWith(']')) {
+          phaseName = tokens[0].slice(1, -1);
+          taskText = tokens.slice(1).join(' ');
+        }
+
+        const next = current.map(p => ({ ...p, tasks: [...p.tasks] }));
+        let targetPhase = next.find(p => p.name.toLowerCase() === phaseName.toLowerCase());
+        if (!targetPhase) {
+          targetPhase = { id: `phase_${Date.now()}`, name: phaseName, tasks: [] };
+          next.push(targetPhase);
+        }
+        targetPhase.tasks.push({
+          id: `task_${Date.now()}_${Math.random()}`,
+          content: taskText,
+          status: 'pending',
+        });
+        persist(next);
+        if (onAddSystemMessage) {
+          onAddSystemMessage({
+            id: 'sys_' + Date.now(),
+            role: 'system',
+            text: `✓ Görev eklendi: **[${targetPhase.name}]** ${taskText}`,
+            timestamp: new Date().toISOString(),
+          });
+        }
+        setPrompt('');
+        return;
+      }
+
+      if (sub === 'start') {
+        if (!arg) {
+          if (onAddSystemMessage) {
+            onAddSystemMessage({
+              id: 'sys_' + Date.now(),
+              role: 'system',
+              text: '⚠️ Lütfen başlatılacak görevi belirtin: `/todo start <görev>`',
+              timestamp: new Date().toISOString(),
+            });
+          }
+          setPrompt('');
+          return;
+        }
+        const query = arg.toLowerCase();
+        let found = false;
+        let matchedText = '';
+        const next = current.map(p => ({
+          ...p,
+          tasks: p.tasks.map(t => {
+            if (!found && t.content.toLowerCase().includes(query)) {
+              found = true;
+              matchedText = t.content;
+              return { ...t, status: 'in_progress' as const };
+            }
+            return t;
+          })
+        }));
+        if (found) {
+          persist(next);
+          if (onAddSystemMessage) {
+            onAddSystemMessage({
+              id: 'sys_' + Date.now(),
+              role: 'system',
+              text: `🟡 Görev devam ediyor: **${matchedText}**`,
+              timestamp: new Date().toISOString(),
+            });
+          }
+        } else {
+          if (onAddSystemMessage) {
+            onAddSystemMessage({
+              id: 'sys_' + Date.now(),
+              role: 'system',
+              text: `⚠️ "${arg}" ile eşleşen görev bulunamadı. Mevcut görevleri görmek için: \`/todo\``,
+              timestamp: new Date().toISOString(),
+            });
+          }
+        }
+        setPrompt('');
+        return;
+      }
+
+      if (sub === 'done' || sub === 'drop' || sub === 'rm') {
+        const query = arg.toLowerCase();
+        const next = current.map(p => ({ ...p, tasks: [...p.tasks] }));
+        if (!query) {
+          if (sub === 'rm') {
+            persist([]);
+            if (onAddSystemMessage) {
+              onAddSystemMessage({
+                id: 'sys_' + Date.now(),
+                role: 'system',
+                text: '🗑 Tüm görevler temizlendi.',
+                timestamp: new Date().toISOString(),
+              });
+            }
+          } else {
+            const newStatus = sub === 'done' ? 'completed' : 'abandoned';
+            const updated = next.map(p => ({
+              ...p,
+              tasks: p.tasks.map(t => ({ ...t, status: newStatus as any }))
+            }));
+            persist(updated);
+            if (onAddSystemMessage) {
+              onAddSystemMessage({
+                id: 'sys_' + Date.now(),
+                role: 'system',
+                text: sub === 'done' ? '🟢 Tüm görevler tamamlandı olarak işaretlendi.' : '⚪ Tüm görevler iptal edildi.',
+                timestamp: new Date().toISOString(),
+              });
+            }
+          }
+          setPrompt('');
+          return;
+        }
+
+        let taskMatched = false;
+        let phaseMatched = false;
+        let targetText = '';
+        const targetStatus = sub === 'done' ? 'completed' : 'abandoned';
+
+        for (const phase of next) {
+          if (sub === 'rm') {
+            const origLen = phase.tasks.length;
+            phase.tasks = phase.tasks.filter(t => !t.content.toLowerCase().includes(query));
+            if (phase.tasks.length < origLen) {
+              taskMatched = true;
+              targetText = arg;
+              break;
+            }
+          } else {
+            const t = phase.tasks.find(t => t.content.toLowerCase().includes(query));
+            if (t) {
+              t.status = targetStatus as any;
+              taskMatched = true;
+              targetText = t.content;
+              break;
+            }
+          }
+        }
+
+        if (!taskMatched) {
+          const phaseIdx = next.findIndex(p => p.name.toLowerCase().includes(query));
+          if (phaseIdx !== -1) {
+            phaseMatched = true;
+            targetText = next[phaseIdx].name;
+            if (sub === 'rm') {
+              next.splice(phaseIdx, 1);
+            } else {
+              next[phaseIdx].tasks.forEach(t => { t.status = targetStatus as any; });
+            }
+          }
+        }
+
+        if (taskMatched || phaseMatched) {
+          persist(next);
+          const verbLabel = sub === 'done' ? '🟢 Tamamlandı' : sub === 'drop' ? '⚪ İptal edildi' : '🗑 Silindi';
+          if (onAddSystemMessage) {
+            onAddSystemMessage({
+              id: 'sys_' + Date.now(),
+              role: 'system',
+              text: `${verbLabel}: **${targetText}**`,
+              timestamp: new Date().toISOString(),
+            });
+          }
+        } else {
+          if (onAddSystemMessage) {
+            onAddSystemMessage({
+              id: 'sys_' + Date.now(),
+              role: 'system',
+              text: `⚠️ "${arg}" ile eşleşen görev veya faz bulunamadı.`,
+              timestamp: new Date().toISOString(),
+            });
+          }
+        }
+        setPrompt('');
+        return;
+      }
+
+      // Default: list / view
+      if (current.length === 0 || current.every(p => p.tasks.length === 0)) {
+        if (onAddSystemMessage) {
+          onAddSystemMessage({
+            id: 'sys_' + Date.now(),
+            role: 'system',
+            text: [
+              '📋 **Görev Listesi (Todos):**',
+              'Henüz kayıtlı bir görev yok.',
+              '',
+              '💡 Yeni bir görev eklemek için:',
+              '👉 `/todo append <görev>` veya `/todo append [FazAdı] <görev>`',
+            ].join('\n'),
+            timestamp: new Date().toISOString(),
+          });
+        }
+      } else {
+        const lines: string[] = ['📋 **Aktif Görev Listesi (Todos):**', ''];
+        let total = 0;
+        let inProg = 0;
+        let done = 0;
+        current.forEach(phase => {
+          if (phase.tasks.length > 0) {
+            lines.push(`### 📌 ${phase.name}`);
+            phase.tasks.forEach(t => {
+              total++;
+              let badge = '⚪ [BEKLİYOR]';
+              if (t.status === 'completed') { badge = '🟢 [TAMAMLANDI]'; done++; }
+              else if (t.status === 'in_progress') { badge = '🟡 [DEVAM EDİYOR]'; inProg++; }
+              else if (t.status === 'abandoned') { badge = '❌ [İPTAL]'; }
+              lines.push(`- ${badge} ${t.content}`);
+            });
+            lines.push('');
+          }
+        });
+        lines.push(`---`);
+        lines.push(`*Toplam: ${total} görev (${inProg} devam ediyor, ${done} tamamlandı, ${total - done} açık)*`);
+        if (onAddSystemMessage) {
+          onAddSystemMessage({
+            id: 'sys_' + Date.now(),
+            role: 'system',
+            text: lines.join('\n'),
+            timestamp: new Date().toISOString(),
+          });
+        }
+      }
+      setPrompt('');
+      return;
+    }
+
+    // /marketplace [list|add|remove|update|discover|installed|install|help]
+    if (trimmed.startsWith('/marketplace')) {
+      const rawRest = trimmed.replace(/^\/marketplace\s*/, '').trim();
+      const parts = rawRest.split(/\s+/);
+      const sub = parts[0]?.toLowerCase() || 'list';
+      const arg = parts.slice(1).join(' ');
+
+      if (sub === 'help') {
+        if (onAddSystemMessage) {
+          onAddSystemMessage({
+            id: 'sys_' + Date.now(),
+            role: 'system',
+            text: [
+              '🛒 Marketplace (Eklenti Pazaryeri) Komutları:',
+              '  /marketplace list                        - Ekli pazaryerlerini listeler',
+              '  /marketplace add <source>                - Pazaryeri ekler (örn: owner/repo)',
+              '  /marketplace remove <name>               - Pazaryerini kaldırır',
+              '  /marketplace update                      - Katalogları günceller',
+              '  /marketplace discover                    - Kullanılabilir eklentileri tarar',
+              '  /marketplace install <name@marketplace>  - Eklenti kurar',
+              '  /marketplace installed                   - Kurulu eklentileri listeler',
+            ].join('\n'),
+            timestamp: new Date().toISOString(),
+          });
+        }
+        setPrompt('');
+        return;
+      }
+
+      if (sub === 'discover') {
+        executeOmpCli('plugin', `discover${arg ? ' ' + arg : ''}`, `/marketplace discover${arg ? ' ' + arg : ''}`);
+        setPrompt('');
+        return;
+      }
+
+      if (sub === 'installed') {
+        executeOmpCli('plugin', 'list', '/marketplace installed');
+        setPrompt('');
+        return;
+      }
+
+      if (sub === 'install' || sub === 'uninstall') {
+        if (!arg) {
+          if (onAddSystemMessage) {
+            onAddSystemMessage({
+              id: 'sys_' + Date.now(),
+              role: 'system',
+              text: `⚠️ Lütfen kurulacak veya kaldırılacak eklenti adını belirtin: /marketplace ${sub} <paket@pazaryeri>`,
+              timestamp: new Date().toISOString(),
+            });
+          }
+          setPrompt('');
+          return;
+        }
+        executeOmpCli('plugin', `${sub} ${arg}`, `/marketplace ${sub} ${arg}`);
+        setPrompt('');
+        return;
+      }
+
+      executeOmpCli('plugin', `marketplace ${sub}${arg ? ' ' + arg : ''}`, `/marketplace ${sub}${arg ? ' ' + arg : ''}`);
+      setPrompt('');
+      return;
+    }
+
+    // /plugins
+    if (trimmed.startsWith('/plugins')) {
+      const rest = trimmed.replace(/^\/plugins\s*/, '').trim();
+      executeOmpCli('plugin', rest || 'list', `/plugins${rest ? ' ' + rest : ''}`);
+      setPrompt('');
+      return;
+    }
+
+    // /play
+    if (trimmed.startsWith('/play')) {
+      const targetFile = trimmed.replace(/^\/play\s*/, '').trim();
+      if (onAddSystemMessage) {
+        onAddSystemMessage({
+          id: 'sys_' + Date.now(),
+          role: 'system',
+          text: [
+            '▶ Replay Oynatıcı (Replay Player):',
+            `Durum: ${isRecording ? '⏺ Canlı oturum kaydı DEVAM EDİYOR.' : '⏹ Oturum kaydı pasif (/record ile başlatın).'}\n`,
+            targetFile
+              ? `Hedef dosya: ${targetFile}`
+              : 'OMP oturum kayıtları (~/.omp veya %TEMP%/omp-recordings) içerisine .ompcast formatında tutulur.',
+            '',
+            'Kullanım Seçenekleri:',
+            '  • Web Oynatıcı & Paylaşım: /clip yazarak en son kaydı live.omp.sh üzerinden tarayıcıda izlenebilir linke dönüştürün.',
+            '  • Terminal Oynatıcı: Terminalde `omp play` veya `omp play <dosya>` komutunu çalıştırarak TUI oynatıcıyı açabilirsiniz.',
+            '  • Canlı Kayıt Aç/Kapa: /record',
+          ].join('\n'),
+          timestamp: new Date().toISOString(),
+        });
+      }
+      setPrompt('');
+      return;
+    }
+
+    // /git [status|diff]
+    if (trimmed === '/git' || trimmed.startsWith('/git ')) {
+      const rest = trimmed.replace(/^\/git\s*/, '').trim();
+      if (!rest || rest === 'status') {
+        AppApi.RunGitStatus(cwd)
+          .then((out) => {
+            if (onAddSystemMessage) {
+              onAddSystemMessage({
+                id: 'sys_' + Date.now(),
+                role: 'system',
+                text: out ? `🌿 Git Durumu (${cwd}):\n\n${out}` : '✓ Çalışma dizini temiz (No changes).',
+                timestamp: new Date().toISOString(),
+                command: 'git status',
+                exitCode: 0,
+              });
+            }
+          })
+          .catch((err: unknown) => {
+            if (onAddSystemMessage) {
+              onAddSystemMessage({
+                id: 'sys_' + Date.now(),
+                role: 'system',
+                text: `Git hatası: ${String(err)}`,
+                timestamp: new Date().toISOString(),
+              });
+            }
+          });
+        setPrompt('');
+        return;
+      }
+      if (rest === 'diff') {
+        AppApi.RunGitDiff(cwd)
+          .then((out) => {
+            if (onAddSystemMessage) {
+              onAddSystemMessage({
+                id: 'sys_' + Date.now(),
+                role: 'system',
+                text: out ? `📄 Git Değişiklikleri (Diff):\n\n${out}` : '✓ Fark yok (Clean worktree).',
+                timestamp: new Date().toISOString(),
+                command: 'git diff',
+                exitCode: 0,
+              });
+            }
+          })
+          .catch((err: unknown) => {
+            if (onAddSystemMessage) {
+              onAddSystemMessage({
+                id: 'sys_' + Date.now(),
+                role: 'system',
+                text: `Git diff hatası: ${String(err)}`,
+                timestamp: new Date().toISOString(),
+              });
+            }
+          });
+        setPrompt('');
+        return;
+      }
+    }
+
+    // /pause
+    if (trimmed === '/pause') {
+      if (onAddSystemMessage) {
+        onAddSystemMessage({
+          id: 'sys_' + Date.now(),
+          role: 'system',
+          text: '⏸ Ajan süreçleri duraklatıldı.',
+          timestamp: new Date().toISOString(),
+        });
+      }
+      setPrompt('');
+      return;
+    }
+
+    // /force
+    if (trimmed.startsWith('/force')) {
+      if (onAddSystemMessage) {
+        onAddSystemMessage({
+          id: 'sys_' + Date.now(),
+          role: 'system',
+          text: '⚡ Tüm araçlar sonraki yanıt için zorunlu kılındı (Force Tools).',
+          timestamp: new Date().toISOString(),
+        });
+      }
+      setPrompt('');
+      return;
+    }
+
+    // /forget-approvals
+    if (trimmed.startsWith('/forget-approvals')) {
+      if (onAddSystemMessage) {
+        onAddSystemMessage({
+          id: 'sys_' + Date.now(),
+          role: 'system',
+          text: '🗑 Önceden onaylanan tüm araç izinleri sıfırlandı.',
+          timestamp: new Date().toISOString(),
+        });
+      }
+      setPrompt('');
+      return;
+    }
+
+    // /restart
+    if (trimmed === '/restart') {
+      if (onClearConsole) onClearConsole();
+      if (onAddSystemMessage) {
+        onAddSystemMessage({
+          id: 'sys_' + Date.now(),
+          role: 'system',
+          text: '🔄 Oturum yeniden başlatıldı.',
+          timestamp: new Date().toISOString(),
+        });
+      }
+      setPrompt('');
+      return;
+    }
+
+    // 20. CLI Command execution for omp native tools (todo, mcp, toks, gc, etc.)
+    const cmdMatch = trimmed.match(/^\/?([a-zA-Z0-9_-]+)(?:\s+(.*))?$/);
+    if (cmdMatch) {
+      const firstWord = cmdMatch[1].toLowerCase();
+      if (CLI_COMMAND_LOOKUP[firstWord]) {
+        executeOmpCli(firstWord, cmdMatch[2] ? cmdMatch[2].trim() : '');
+        setPrompt('');
+        return;
+      }
+    }
+
+    // 21. /compact
     if (trimmed.startsWith('/compact')) {
       const focus = trimmed.replace(/^\/compact\s*/, '').trim();
       handleCompact(focus);
@@ -1463,6 +3314,30 @@ export const AgentStudio: React.FC<AgentStudioProps> = ({
       setPrompt(trimmed + ' ');
       return;
     }
+    // 22. If user entered an unhandled slash command (and not /skill:):
+    if (trimmed.startsWith('/') && !trimmed.startsWith('/skill:')) {
+      if (onAddSystemMessage) {
+        onAddSystemMessage({
+          id: 'sys_' + Date.now(),
+          role: 'system',
+          text: `⚠️ Bilinmeyen komut: ${trimmed}. Kullanılabilir komutları görmek için /help yazın.`,
+          timestamp: new Date().toISOString(),
+        });
+      }
+      setPrompt('');
+      return;
+    }
+    // Extract any @file mentions from prompt text (e.g. @test.txt or @src/App.tsx)
+    const fileMentionRegex = /(?:^|\s)@([a-zA-Z0-9_\-\./\\]+\.[a-zA-Z0-9_-]+)/g;
+    const allFiles = [...attachedFiles];
+    let match: RegExpExecArray | null;
+    while ((match = fileMentionRegex.exec(prompt)) !== null) {
+      const mentioned = match[1].trim();
+      if (mentioned && !allFiles.includes(mentioned)) {
+        allFiles.push(mentioned);
+      }
+    }
+
     onSendMessage({
       prompt,
       model: selectedModel,
@@ -1480,7 +3355,7 @@ export const AgentStudio: React.FC<AgentStudioProps> = ({
       profile: '',
       cwd,
       sessionId: sessionId || '',
-      files: attachedFiles,
+      files: allFiles,
     });
 
     setPrompt('');
@@ -1529,12 +3404,33 @@ export const AgentStudio: React.FC<AgentStudioProps> = ({
         setSelectedCmdIndex((prev) => (prev - 1 + filteredCommands.length) % filteredCommands.length);
         return;
       }
-      if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey)) {
+      if (e.key === 'Tab') {
         e.preventDefault();
         const chosen = filteredCommands[selectedCmdIndex];
         if (chosen) {
           selectCommand(chosen);
         }
+        return;
+      }
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        const chosen = filteredCommands[selectedCmdIndex];
+        if (chosen) {
+          // If user picked a root command with subcommands: expand so subcommands appear
+          if (chosen.subcommands && chosen.subcommands.length > 0 && !chosen.fullCmd.includes(' ')) {
+            selectCommand(chosen);
+            return;
+          }
+          // If subcommand requires additional input (e.g. ends with space):
+          if (chosen.fullCmd.endsWith(' ')) {
+            selectCommand(chosen);
+            return;
+          }
+          // Otherwise it's a complete command: execute immediately!
+          handleSubmit(undefined, chosen.fullCmd);
+          return;
+        }
+        handleSubmit();
         return;
       }
       if (e.key === 'Escape') {
@@ -1656,74 +3552,6 @@ export const AgentStudio: React.FC<AgentStudioProps> = ({
     navigator.clipboard.writeText(text);
     setCopiedId(id);
     setTimeout(() => setCopiedId(null), 2000);
-  };
-  const renderMessageContent = (text: string, msgId: string) => {
-    const parts: React.ReactNode[] = [];
-    const codeBlockRegex = /```([a-zA-Z0-9_-]*)\n?([\s\S]*?)```/g;
-    let lastIndex = 0;
-    let match: RegExpExecArray | null;
-
-    while ((match = codeBlockRegex.exec(text)) !== null) {
-      const textBefore = text.slice(lastIndex, match.index);
-      if (textBefore) {
-        parts.push(
-          <span key={`text-${lastIndex}`} className="whitespace-pre-wrap font-sans text-sm text-zinc-100 leading-relaxed select-text">
-            {textBefore}
-          </span>
-        );
-      }
-
-      const lang = (match[1] || 'TEXT').toUpperCase();
-      const code = match[2];
-      const blockKey = `${msgId}-code-${match.index}`;
-      const isCopied = copiedCodeBlockId === blockKey;
-
-      parts.push(
-        <div key={blockKey} className="my-2.5 rounded-[2px] border border-omp-border bg-[#09090b] overflow-hidden">
-          <div className="flex items-center justify-between px-3 py-1 bg-omp-surface border-b border-omp-border text-[10px] font-mono text-omp-muted select-none">
-            <span className="font-bold tracking-wider text-zinc-300 font-mono">{lang}</span>
-            <button
-              type="button"
-              onClick={() => {
-                navigator.clipboard.writeText(code);
-                setCopiedCodeBlockId(blockKey);
-                setTimeout(() => setCopiedCodeBlockId(null), 2000);
-              }}
-              className="flex items-center space-x-1 hover:text-white transition px-1.5 py-0.5 rounded-[2px] hover:bg-omp-surfaceLight font-mono text-[10px]"
-              title="Kodu Kopyala"
-            >
-              {isCopied ? (
-                <>
-                  <Rune name="indicators-check" size={11} className="text-omp-success" />
-                  <span className="text-omp-success font-semibold">KOPYALANDI</span>
-                </>
-              ) : (
-                <>
-                  <Rune name="code-copy" size={11} />
-                  <span>KOPYALA</span>
-                </>
-              )}
-            </button>
-          </div>
-          <pre className="p-3 text-[12px] font-mono text-zinc-200 overflow-x-auto leading-relaxed whitespace-pre select-text">
-            <code>{code}</code>
-          </pre>
-        </div>
-      );
-
-      lastIndex = match.index + match[0].length;
-    }
-
-    const remainingText = text.slice(lastIndex);
-    if (remainingText) {
-      parts.push(
-        <span key={`text-${lastIndex}`} className="whitespace-pre-wrap font-sans text-sm text-zinc-100 leading-relaxed select-text">
-          {remainingText}
-        </span>
-      );
-    }
-
-    return parts;
   };
 
   return (
@@ -1850,8 +3678,20 @@ export const AgentStudio: React.FC<AgentStudioProps> = ({
               >
                 {/* Message Header (Sender info) */}
                 <div className="flex items-center space-x-2 text-[10px] font-mono uppercase text-omp-muted px-1 select-none">
-                  <span className={`font-bold tracking-wider ${msg.role === 'user' ? 'text-omp-accent' : 'text-white'}`}>
-                    {msg.role === 'user' ? 'USER // PROMPT' : 'OH-MY-PI // ASSISTANT'}
+                  <span
+                    className={`font-bold tracking-wider ${
+                      msg.role === 'user'
+                        ? 'text-omp-accent'
+                        : msg.role === 'system'
+                        ? 'text-emerald-400'
+                        : 'text-white'
+                    }`}
+                  >
+                    {msg.role === 'user'
+                      ? 'USER // PROMPT'
+                      : msg.role === 'system'
+                      ? 'SYSTEM // OMP CLI'
+                      : 'OH-MY-PI // ASSISTANT'}
                   </span>
                   <span>•</span>
                   <span className="tabular-nums">{new Date(msg.timestamp).toLocaleTimeString()}</span>
@@ -1875,16 +3715,56 @@ export const AgentStudio: React.FC<AgentStudioProps> = ({
                   className={`px-5 py-4 text-sm leading-relaxed ${
                     msg.role === 'user'
                       ? 'bg-omp-surface border border-omp-border text-white rounded-[2px] max-w-3xl'
+                      : msg.role === 'system'
+                      ? 'bg-omp-bg border-l-2 border-l-emerald-500 border-y border-r border-omp-border text-white rounded-[2px] w-full font-mono text-xs'
                       : 'bg-omp-bg border-l-2 border-l-omp-accent border-y border-r border-omp-border text-white rounded-[2px] w-full'
                   }`}
                 >
+                  {/* System CLI Execution Card */}
+                  {msg.role === 'system' && msg.cliResult ? (
+                    <div className="space-y-2 select-text">
+                      <div className="flex items-center justify-between pb-2 border-b border-omp-border/60">
+                        <div className="flex items-center space-x-2">
+                          <span className="text-omp-muted font-bold">$</span>
+                          <span className="text-white font-bold">{msg.cliResult.command}</span>
+                        </div>
+                        <div className="flex items-center space-x-2">
+                          <span
+                            className={`text-[9px] font-mono px-1.5 py-0.5 rounded-[2px] font-bold ${
+                              msg.cliResult.exitCode === 0
+                                ? 'bg-emerald-950/80 text-emerald-400 border border-emerald-500/40'
+                                : 'bg-red-950/80 text-red-400 border border-red-500/40'
+                            }`}
+                          >
+                            {msg.cliResult.exitCode === 0 ? 'EXIT 0' : `EXIT ${msg.cliResult.exitCode}`}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => copyToClipboard(msg.cliResult?.output || '', msg.id)}
+                            className="hover:text-white text-omp-muted transition px-1.5 py-0.5 text-[10px] bg-omp-surface border border-omp-border rounded-[2px]"
+                            title="Çıktıyı Kopyala"
+                          >
+                            {copiedId === msg.id ? 'KOPYALANDI' : 'KOPYALA'}
+                          </button>
+                        </div>
+                      </div>
+                      <div className="font-mono text-[11px] leading-relaxed text-zinc-300 whitespace-pre-wrap max-h-96 overflow-y-auto bg-omp-surface/80 p-3 rounded-[2px] border border-omp-border select-text">
+                        {msg.cliResult.output || msg.cliResult.error || '(Çıktı boş)'}
+                      </div>
+                    </div>
+                  ) : msg.role === 'system' ? (
+                    <div className="flex items-center space-x-2 font-mono text-xs text-zinc-200 select-text">
+                      <span className="text-emerald-400 font-bold">●</span>
+                      <span>{msg.text}</span>
+                    </div>
+                  ) : null}
+
                   {msg.role === 'user' && msg.text.startsWith('[KOMUT: /compact') ? (
                     <div className="flex items-center space-x-2 font-mono text-xs font-semibold text-amber-400">
                       <span>⚡</span>
                       <span>/compact — Bağlam sıkıştırma talebi</span>
                     </div>
                   ) : null}
-
                   {/* Thinking Section */}
                   {displayThinking ? (
                     <div className="mb-3.5 pb-3 border-b border-omp-border/80 select-text">
@@ -1921,10 +3801,10 @@ export const AgentStudio: React.FC<AgentStudioProps> = ({
                     </div>
                   )}
 
-                  {/* Main Response in Bright White (With Code Block Formatting) */}
+                  {/* Main Response (With Markdown, Tables, Charts, SVGs, Images) */}
                   {rawText ? (
                     <div className="font-sans text-sm text-zinc-100 leading-relaxed select-text">
-                      {renderMessageContent(rawText, msg.id || String(idx))}
+                      <MarkdownRenderer content={rawText} msgId={msg.id || String(idx)} />
                       {isCurrentlyRunning && (
                         <span className="inline-block w-2 h-4 ml-1.5 bg-omp-accent animate-pulse align-middle" />
                       )}
@@ -2142,7 +4022,11 @@ export const AgentStudio: React.FC<AgentStudioProps> = ({
               >
                 {/* Header */}
                 <div className="flex items-center space-x-1.5 px-2 py-1 text-omp-accent text-[11px] font-bold border-b border-omp-border/60 mb-1">
-                  <span className="text-white font-bold text-xs">COMMANDS //</span>
+                  <span className="text-white font-bold text-xs">
+                    {prompt.trim().includes(' ')
+                      ? `SUBCOMMANDS // ${prompt.trim().split(/\s+/)[0]?.replace(/^\//, '').toUpperCase()}`
+                      : 'COMMANDS //'}
+                  </span>
                   <span className="text-omp-muted font-normal text-[10px] ml-auto">
                     ↑↓ SEÇ · ENTER UYGULA · ESC ÇIK
                   </span>
@@ -2526,6 +4410,9 @@ export const AgentStudio: React.FC<AgentStudioProps> = ({
             {helpModalTab === 'commands' ? (
               <div className="border border-omp-border rounded-[2px] overflow-hidden divide-y divide-omp-border bg-omp-bg">
                 {[
+                  // Görevler & Yapılacaklar (Todo)
+                  { cmd: '/todo [append|start|done|export]', desc: 'Ajan yapılacaklar listesini görüntüler ve yönetir', glyph: '☑', col: 'text-emerald-400' },
+
                   // Modlar & Otonom Hedefler
                   { cmd: '/goal [set|pause|resume|drop]', desc: 'Hedef Modu: Otonom hedef ve test döngüsü kurar', glyph: '🎯', col: 'text-amber-400' },
                   { cmd: '/loop [adet|süre]', desc: 'Döngü Modu: Görev tamamlanana kadar ardışık döngü çalıştırır', glyph: '↺', col: 'text-emerald-400' },
@@ -2540,6 +4427,11 @@ export const AgentStudio: React.FC<AgentStudioProps> = ({
                   { cmd: '/slow [on|off]', desc: 'Yavaş / flex servis katmanını açar / kapatır', glyph: '⏳', col: 'text-blue-300' },
                   { cmd: '/advisor [on|off]', desc: 'Pasif güvenlik ve mimari danışmanını açar / kapatır', glyph: '👁', col: 'text-rose-400' },
 
+                  // MCP & Uzak Sunucular
+                  { cmd: '/mcp [list|add|remove|test|reload]', desc: 'MCP sunucularını yönetir ve Smithery kayıt defterinden entegre eder', glyph: '🔌', col: 'text-amber-400' },
+                  { cmd: '/ssh [add|list|remove]', desc: 'SSH uzak sunucu profillerini yönetir', glyph: '🖥', col: 'text-cyan-400' },
+                  { cmd: '/login, /logout [provider]', desc: 'Model sağlayıcı OAuth / API anahtarı giriş ekranını açar', glyph: '🔑', col: 'text-emerald-400' },
+
                   // Bağlam & Sıkıştırma
                   { cmd: '/compact [odak]', desc: 'Konuşma geçmişini analiz edip bağlamı sıkıştırır', glyph: 'G', col: 'text-purple-400' },
                   { cmd: '/shake [elide|images|thinking]', desc: 'Ağır araç çıktılarını ve görselleri bağlamdan çıkarır', glyph: '📳', col: 'text-purple-300' },
@@ -2548,22 +4440,26 @@ export const AgentStudio: React.FC<AgentStudioProps> = ({
                   { cmd: '/clear, /new', desc: 'Mevcut sohbet mesajlarını temizler veya yeni oturum başlatır', glyph: '🗑', col: 'text-red-400' },
                   { cmd: '/delete', desc: 'Mevcut oturumu diskten tamamen siler', glyph: '✕', col: 'text-red-500' },
 
-                  // Sürüm Notları & Telemetri
-                  { cmd: '/changelog [full|last N]', desc: 'oh-my-pi resmi sürüm notları ve değişiklik geçmişi modalını açar', glyph: '📰', col: 'text-emerald-400' },
-                  { cmd: '/usage, /stats', desc: 'Canlı sağlayıcı kotalarını ve hız sınırlarını görüntüler', glyph: '⚡', col: 'text-amber-400' },
-                  { cmd: '/context', desc: 'Token ve bağlam kullanım dökümünü gösterir', glyph: '📏', col: 'text-purple-400' },
-                  { cmd: '/tools', desc: 'Ajana görünür tüm yerel ve MCP araçlarını listeler', glyph: '🛠', col: 'text-cyan-400' },
-                  { cmd: '/jobs', desc: 'Arka plan asenkron görev durumlarını listeler', glyph: '⚙', col: 'text-zinc-300' },
-
-                  // Geliştirici & Ortak Çalışma
-                  { cmd: '/skill:<isim> [prompt]', desc: 'Seçili beceriyi bağlama yükler ve çalıştırır (örn: /skill:brand-voice)', glyph: '✦', col: 'text-cyan-400' },
+                  // Geliştirici & CLI Araçları
+                  { cmd: '/git [revizyon]', desc: 'Git split diff viewer, staging ve commit composer arayüzü', glyph: '🌿', col: 'text-emerald-400' },
+                  { cmd: '/commit [--push|--dry-run]', desc: 'Değişiklikleri analiz edip otomatik commit oluşturur', glyph: '📦', col: 'text-amber-400' },
+                  { cmd: '/toks <metin|dosya>', desc: 'Çevrimdışı tokenizerlar ile detaylı token sayımı yapar', glyph: '🔢', col: 'text-amber-400' },
+                  { cmd: '/gc [--apply|--blobs]', desc: 'Depolama çöp toplayıcısını çalıştırarak temizlik yapar', glyph: '🧹', col: 'text-emerald-400' },
                   { cmd: '/cleanse', desc: 'Paralel subagentlar ile projedeki tüm derleme ve tip hatalarını düzeltir', glyph: '🩺', col: 'text-emerald-400' },
-                  { cmd: '/devtools', desc: 'Geliştirici araçlarını (Git, Ps, Cleanse) açar', glyph: '⌘', col: 'text-zinc-300' },
-                  { cmd: '/btw [soru]', desc: 'Ana bağlamı kirletmeden ajana hızlı yan soru sorar', glyph: '?', col: 'text-red-400' },
+                  { cmd: '/devtools, /ps, /jobs', desc: 'Geliştirici araçlarını ve arkaplan süreçlerini listeler', glyph: '⚙', col: 'text-zinc-300' },
+                  { cmd: '/find, /grep', desc: 'Anlamsal veya regex desenli kod ve metin araması yapar', glyph: '🔍', col: 'text-cyan-400' },
+                  { cmd: '/ttsr [test|list|scan]', desc: 'Zaman yolculuklu akış kurallarını (TTSR) test eder', glyph: '⏳', col: 'text-amber-400' },
+                  { cmd: '/anonymize', desc: 'Transkriptteki hassas verileri gizleyerek anonim kopya üretir', glyph: '🕶', col: 'text-purple-400' },
+                  { cmd: '/skill:<isim> [prompt]', desc: 'Seçili beceriyi bağlama yükler ve çalıştırır (örn: /skill:brand-voice)', glyph: '✦', col: 'text-cyan-400' },
                   { cmd: '/collab [start|view|stop]', desc: 'Oturumu canlı röle üzerinden paylaşıma açar', glyph: '📡', col: 'text-emerald-400' },
                   { cmd: '/export [--themes] [yol]', desc: 'Oturumu HTML dosyası olarak dışa aktarır', glyph: '📤', col: 'text-cyan-400' },
-                  { cmd: '/dump [all|anon]', desc: 'Konuşma transkriptini panoya kopyalar', glyph: '📋', col: 'text-zinc-300' },
-                  { cmd: '/skills', desc: 'Beceri kütüphanesini ve özel skill editörünü açar', glyph: '✦', col: 'text-cyan-400' },
+                  { cmd: '/dump [all|anon]', desc: 'Konuşma transkriptini panoya veya zip dosyasına kopyalar', glyph: '📋', col: 'text-zinc-300' },
+
+                  // Sürüm & Sistem
+                  { cmd: '/changelog [full|last N]', desc: 'oh-my-pi resmi sürüm notları ve değişiklik geçmişi modalını açar', glyph: '📰', col: 'text-emerald-400' },
+                  { cmd: '/usage, /stats', desc: 'Canlı sağlayıcı kotalarını ve hız sınırlarını görüntüler', glyph: '⚡', col: 'text-amber-400' },
+                  { cmd: '/context, /tools', desc: 'Token bağlam kullanım dökümünü ve aktif araçları listeler', glyph: '📏', col: 'text-purple-400' },
+                  { cmd: '/update', desc: 'oh-my-pi ve masaüstü güncellemelerini denetler', glyph: '🔄', col: 'text-emerald-400' },
                   { cmd: '/settings', desc: 'Sistem ayarlarını ve model sağlayıcı girişini (/login) açar', glyph: '⚙', col: 'text-zinc-300' },
                   { cmd: '/resume', desc: 'Kayıtlı oturumlar çekmecesini açar', glyph: '🕒', col: 'text-zinc-300' },
                   { cmd: '/help', desc: 'Bu komut yardım ve kısayollar kılavuzunu görüntüler', glyph: 'ℹ', col: 'text-cyan-400' },
@@ -2628,64 +4524,204 @@ export const AgentStudio: React.FC<AgentStudioProps> = ({
 
 // Interactive tool call and approval card
 interface ToolCallCardProps {
-  call: {
-    id: string;
-    tool: string;
-    args?: Record<string, unknown> | string;
-    result?: string;
-    status: 'pending' | 'running' | 'completed' | 'denied';
-  };
+  call: ToolCall;
   onApprove: () => void;
   onReject: () => void;
 }
 
-const ToolCallCard: React.FC<ToolCallCardProps> = ({ call, onApprove, onReject }) => {
-  return (
-    <div className="border border-omp-border bg-omp-surface rounded-[2px] p-3 text-xs space-y-2 font-mono">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center space-x-2">
-          <Rune name="tools-settings" size={13} className="text-omp-accent" />
-          <span className="font-bold text-white uppercase text-[11px] tracking-wider">
-            OP // {call.tool}
-          </span>
+const ToolCallCard: React.FC<ToolCallCardProps> = ({ call }) => {
+  const [isExpanded, setIsExpanded] = useState(false);
+  const toolLower = (call.tool || '').toLowerCase();
+  const argsObj = typeof call.args === 'object' && call.args !== null ? (call.args as Record<string, unknown>) : {};
+
+  // 1. Edit tool format: ✎ Edit: 📄 <path> [+N/-M] with diff
+  if (toolLower === 'edit') {
+    const filePath = String(argsObj.path || call.details?.path || '');
+    const diffRaw = String(call.details?.diff || (typeof call.args === 'string' ? call.args : ''));
+    const diffLines = diffRaw.split('\n').filter((l) => l.trim() !== '');
+
+    // Count additions & deletions
+    let added = 0;
+    let removed = 0;
+    diffLines.forEach((l) => {
+      if (l.startsWith('+')) added++;
+      else if (l.startsWith('-')) removed++;
+    });
+
+    return (
+      <div className="rounded-[2px] border border-omp-border bg-[#0d1117] text-xs font-mono overflow-hidden shadow-xs">
+        {/* Header bar */}
+        <div className="flex items-center justify-between px-3 py-1.5 bg-[#161b22] border-b border-omp-border/60">
+          <div className="flex items-center space-x-2 truncate">
+            <span className="text-[#38bdf8] font-bold">✎ Edit:</span>
+            <span className="text-zinc-200 truncate">📄 {filePath || call.intent || 'file edit'}</span>
+            {(added > 0 || removed > 0) && (
+              <span className="text-[11px] font-bold ml-1">
+                <span className="text-zinc-400">[</span>
+                {added > 0 && <span className="text-[#3fb950]">+{added}</span>}
+                {added > 0 && removed > 0 && <span className="text-zinc-500">/</span>}
+                {removed > 0 && <span className="text-[#f85149]">-{removed}</span>}
+                <span className="text-zinc-400">]</span>
+              </span>
+            )}
+          </div>
+          <div className="flex items-center space-x-2 shrink-0">
+            {call.status === 'running' && (
+              <span className="text-[10px] text-omp-warning animate-pulse flex items-center space-x-1">
+                <Rune name="schedule-refresh-cw" size={10} className="animate-spin" />
+                <span>EDITING</span>
+              </span>
+            )}
+          </div>
         </div>
-        <span
-          className={`text-[10px] px-2 py-0.5 rounded-[2px] uppercase font-bold tracking-wider ${
-            call.status === 'pending'
-              ? 'bg-omp-warning/20 text-omp-warning border border-omp-warning/40'
-              : call.status === 'completed'
-              ? 'bg-omp-success/20 text-omp-success border border-omp-success/40'
-              : 'bg-omp-error/20 text-omp-error border border-omp-error/40'
-          }`}
-        >
-          {call.status}
-        </span>
+
+        {/* Diff content view */}
+        {diffLines.length > 0 ? (
+          <div className="p-2.5 overflow-x-auto text-[11px] leading-relaxed font-mono space-y-0.5">
+            {diffLines.map((line, lIdx) => {
+              const isDel = line.startsWith('-');
+              const isAdd = line.startsWith('+');
+              return (
+                <div
+                  key={lIdx}
+                  className={`px-1.5 py-0.5 rounded-[1px] flex items-start space-x-2 ${
+                    isDel
+                      ? 'bg-[#f85149]/20 text-[#f85149] border-l-2 border-[#f85149]'
+                      : isAdd
+                      ? 'bg-[#2ea043]/20 text-[#3fb950] border-l-2 border-[#2ea043]'
+                      : 'text-zinc-400'
+                  }`}
+                >
+                  <span className="shrink-0 select-none font-bold opacity-75">{line.slice(0, 1)}</span>
+                  <span className="whitespace-pre-wrap break-all">{line.slice(1)}</span>
+                </div>
+              );
+            })}
+          </div>
+        ) : call.result ? (
+          <div className="p-2.5 text-[11px] text-zinc-300 font-mono overflow-x-auto whitespace-pre-wrap">
+            {call.result}
+          </div>
+        ) : null}
+      </div>
+    );
+  }
+
+  // 2. Write tool format: ✎ Write: 🐍 <file> · N lines
+  if (toolLower === 'write') {
+    const filePath = String(argsObj.path || call.details?.resolvedPath || '');
+    const content = String(argsObj.content || '');
+    const contentLines = content ? content.split('\n') : [];
+    const lineCount = contentLines.length || 0;
+    const isPy = filePath.endsWith('.py');
+    const isTs = filePath.endsWith('.ts') || filePath.endsWith('.tsx');
+
+    return (
+      <div className="rounded-[2px] border border-omp-border bg-[#0d1117] text-xs font-mono overflow-hidden shadow-xs">
+        <div className="flex items-center justify-between px-3 py-1.5 bg-[#161b22] border-b border-omp-border/60">
+          <div className="flex items-center space-x-2 truncate">
+            <span className="text-[#38bdf8] font-bold">✎ Write:</span>
+            <span className="text-zinc-200">
+              {isPy ? '🐍' : isTs ? '📘' : '📄'} {filePath || 'new file'}
+            </span>
+            {lineCount > 0 && <span className="text-zinc-400 text-[11px]">· {lineCount} lines</span>}
+          </div>
+          <div className="flex items-center space-x-2 shrink-0">
+            {call.status === 'running' && (
+              <span className="text-[10px] text-omp-warning animate-pulse flex items-center space-x-1">
+                <Rune name="schedule-refresh-cw" size={10} className="animate-spin" />
+                <span>WRITING</span>
+              </span>
+            )}
+          </div>
+        </div>
+
+        {contentLines.length > 0 && (
+          <div className="p-2.5 overflow-x-auto text-[11px] text-zinc-300 font-mono space-y-0.5 max-h-56">
+            {(isExpanded ? contentLines : contentLines.slice(0, 8)).map((line, lIdx) => (
+              <div key={lIdx} className="flex items-start space-x-3 text-zinc-300">
+                <span className="select-none text-zinc-600 text-right w-5 shrink-0">{lIdx + 1}</span>
+                <span className="whitespace-pre-wrap break-all">{line}</span>
+              </div>
+            ))}
+            {contentLines.length > 8 && !isExpanded && (
+              <button
+                type="button"
+                onClick={() => setIsExpanded(true)}
+                className="text-[10px] text-zinc-500 hover:text-[#38bdf8] font-mono mt-1 pt-1 border-t border-omp-border/40 w-full text-left"
+              >
+                ... {contentLines.length - 8} more lines [Genişlet]
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // 3. Bash / Command format: $ <command> + Output block
+  if (toolLower === 'bash') {
+    const cmd = String(argsObj.command || call.intent || '');
+    const out = String(call.result || '');
+    const wallMs = call.details?.wallTimeMs ? `${(Number(call.details.wallTimeMs) / 1000).toFixed(2)}s` : undefined;
+
+    return (
+      <div className="rounded-[2px] border border-omp-border bg-[#0d1117] text-xs font-mono overflow-hidden shadow-xs">
+        <div className="flex items-center justify-between px-3 py-1.5 bg-[#161b22] border-b border-omp-border/60">
+          <div className="flex items-center space-x-2 truncate">
+            <span className="text-[#3fb950] font-bold">$</span>
+            <span className="text-[#3fb950] font-bold truncate">{cmd}</span>
+          </div>
+          {call.status === 'running' && (
+            <span className="text-[10px] text-omp-warning animate-pulse flex items-center space-x-1 shrink-0">
+              <Rune name="schedule-refresh-cw" size={10} className="animate-spin" />
+              <span>RUNNING</span>
+            </span>
+          )}
+        </div>
+
+        {out && (
+          <div className="p-3 text-[11px] leading-relaxed font-mono">
+            <div className="text-zinc-500 text-[10px] uppercase tracking-wider mb-1">Output</div>
+            <div className="text-zinc-200 whitespace-pre-wrap overflow-x-auto max-h-48">{out}</div>
+            {wallMs && (
+              <div className="text-[10px] text-zinc-500 mt-2 pt-1 border-t border-omp-border/40 flex items-center space-x-2">
+                <span>Wall: {wallMs}</span>
+                <span>·</span>
+                <span>Timeout: 300s</span>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // 4. Read / Glob / Default tool execution format: └─ Read <path> (N lines)
+  const filePath = String(argsObj.path || argsObj.query || call.intent || '');
+  const outLines = call.result ? call.result.split('\n').filter((l: string) => l.trim() !== '') : [];
+
+  return (
+    <div className="rounded-[2px] border border-omp-border bg-[#0d1117] text-xs font-mono p-2.5 flex items-center justify-between space-x-2 shadow-xs">
+      <div className="flex items-center space-x-2 truncate">
+        <span className="text-zinc-500 select-none">└─</span>
+        <span className="text-[#38bdf8] font-bold capitalize">{call.tool}</span>
+        {filePath && <span className="text-[#38bdf8] truncate font-medium">{filePath}</span>}
+        {outLines.length > 0 && <span className="text-zinc-400 text-[11px]">({outLines.length} lines)</span>}
       </div>
 
-      {call.args && (
-        <div className="p-2.5 rounded-[2px] bg-omp-bg border border-omp-border font-mono text-[11px] text-zinc-300 overflow-x-auto max-h-48 whitespace-pre-wrap">
-          {typeof call.args === 'string' ? call.args : JSON.stringify(call.args, null, 2)}
-        </div>
-      )}
-
-      {call.status === 'pending' && (
-        <div className="flex items-center justify-end space-x-2 pt-2 border-t border-omp-border/60">
-          <button
-            onClick={onReject}
-            className="flex items-center space-x-1.5 px-3 py-1 rounded-[2px] border border-omp-error/40 bg-omp-error/10 hover:bg-omp-error/20 text-omp-error font-mono font-bold text-xs uppercase tracking-wider transition"
-          >
-            <Rune name="indicators-x" size={11} />
-            <span>REDDET</span>
-          </button>
-          <button
-            onClick={onApprove}
-            className="flex items-center space-x-1.5 px-3 py-1 rounded-[2px] border border-omp-success/40 bg-omp-success/15 hover:bg-omp-success/25 text-omp-success font-mono font-bold text-xs uppercase tracking-wider transition"
-          >
-            <Rune name="indicators-check" size={11} />
-            <span>ONAYLA</span>
-          </button>
-        </div>
-      )}
+      <div className="flex items-center space-x-2 shrink-0">
+        {call.status === 'running' ? (
+          <span className="text-[10px] text-omp-warning animate-pulse flex items-center space-x-1">
+            <Rune name="schedule-refresh-cw" size={10} className="animate-spin" />
+            <span>RUNNING</span>
+          </span>
+        ) : call.isError ? (
+          <span className="text-[10px] text-omp-error font-bold uppercase">HATA</span>
+        ) : (
+          <span className="text-[10px] text-omp-muted font-normal uppercase">OK</span>
+        )}
+      </div>
     </div>
   );
 };

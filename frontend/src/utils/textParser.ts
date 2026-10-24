@@ -18,62 +18,34 @@ export function splitThinkingAndResponse(text: string): SplitResult {
     return { thinking: '', response: '' };
   }
 
-  // 1. Double newline split (natural paragraph boundary)
-  if (cleaned.includes('\n\n')) {
-    const blocks = cleaned
-      .split(/\n\n+/)
-      .map((b) => b.trim())
-      .filter(Boolean);
-
-    if (blocks.length > 1) {
-      return {
-        thinking: blocks.slice(0, -1).join('\n\n'),
-        response: blocks[blocks.length - 1],
-      };
-    }
+  // 1. Check for XML-style thinking tags: <think>...</think> or <thinking>...</thinking>
+  const thinkTagMatch = cleaned.match(/^<think(?:ing)?>([\s\S]*?)<\/think(?:ing)?>/i);
+  if (thinkTagMatch) {
+    const thinking = thinkTagMatch[1].trim();
+    const response = cleaned.slice(thinkTagMatch[0].length).trim();
+    return { thinking, response };
   }
 
-  // 2. Line by line analysis: Detect transition from English reasoning to Turkish answer
-  const lines = cleaned
-    .split('\n')
-    .map((l) => l.trim())
-    .filter(Boolean);
-
-  if (lines.length <= 1) {
-    return { thinking: '', response: cleaned };
-  }
-
-  const turkishChars = /[çğıöşüÇĞİÖŞÜ]/;
-  const commonTrWords =
-    /\b(anlaşıldı|anladım|merhaba|tabii|tabi|evet|hayır|tamam|hangi|selam|görev|modül|dosya|proje|şöyle|şunlar|kod|hata|çözüm|nasıl|neden|için|başlayalım)\b/i;
-
-  const thinkingLines: string[] = [];
-  const responseLines: string[] = [];
-  let foundResponse = false;
-
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    const hasTrChar = turkishChars.test(line);
-    const hasTrWord = commonTrWords.test(line);
-
-    // If Turkish content starts after English thought lines
-    if ((hasTrChar || hasTrWord) && !foundResponse && i > 0) {
-      foundResponse = true;
-    }
-
-    if (foundResponse) {
-      responseLines.push(line);
-    } else {
-      thinkingLines.push(line);
-    }
-  }
-
-  if (foundResponse && thinkingLines.length > 0) {
+  // 1b. In-progress / streaming unclosed <think> tag at start
+  const openThinkMatch = cleaned.match(/^<think(?:ing)?>([\s\S]*)$/i);
+  if (openThinkMatch) {
     return {
-      thinking: thinkingLines.join('\n\n'),
-      response: responseLines.join('\n'),
+      thinking: openThinkMatch[1].trim(),
+      response: '',
     };
   }
 
+  // 2. Explicit "Thinking Process:" block before response
+  const explicitThinkingMatch = cleaned.match(
+    /^(?:Thinking Process|Thought Process|Reasoning Process|Thinking):\s*\n([\s\S]*?)(?:\n\n(?:Response|Answer|Final Answer):\s*\n|\n---\n)([\s\S]*)$/i
+  );
+  if (explicitThinkingMatch) {
+    return {
+      thinking: explicitThinkingMatch[1].trim(),
+      response: explicitThinkingMatch[2].trim(),
+    };
+  }
+
+  // Otherwise: the entire text is the genuine response! Never chop off markdown paragraphs!
   return { thinking: '', response: cleaned };
 }

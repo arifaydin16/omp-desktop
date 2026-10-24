@@ -72,16 +72,24 @@ export interface ChatMessage {
   workingStatus?: string;
   cost?: number;
   isAdvisor?: boolean;
+  cliResult?: {
+    command: string;
+    output: string;
+    exitCode: number;
+    error?: string;
+  };
 }
 
 export interface ToolCall {
   id: string;
   tool: string;
+  intent?: string;
   args?: Record<string, unknown> | string;
   result?: string;
   status: 'pending' | 'running' | 'completed' | 'denied';
+  isError?: boolean;
+  details?: Record<string, unknown>;
 }
-
 export interface SkillItem {
   name: string;
   description: string;

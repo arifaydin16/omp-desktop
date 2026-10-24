@@ -68,6 +68,24 @@ export namespace omp {
 	        this.authorizedAt = source["authorizedAt"];
 	    }
 	}
+	export class CliCommandResult {
+	    command: string;
+	    output: string;
+	    exitCode: number;
+	    error?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new CliCommandResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.command = source["command"];
+	        this.output = source["output"];
+	        this.exitCode = source["exitCode"];
+	        this.error = source["error"];
+	    }
+	}
 	export class ModelEntry {
 	    id: string;
 	    provider: string;

@@ -75,6 +75,8 @@ export function PackSession(arg1:string,arg2:string):Promise<string>;
 
 export function ReadSkillContent(arg1:string):Promise<string>;
 
+export function ReadWorkspaceFile(arg1:string):Promise<string>;
+
 export function RefreshModels():Promise<string>;
 
 export function RunCleanse(arg1:string):Promise<string>;
@@ -84,6 +86,8 @@ export function RunCommit(arg1:string):Promise<string>;
 export function RunGitDiff(arg1:string):Promise<string>;
 
 export function RunGitStatus(arg1:string):Promise<string>;
+
+export function RunOmpCliCommand(arg1:string,arg2:Array<string>,arg3:string):Promise<omp.CliCommandResult>;
 
 export function SaveApiKeyCredential(arg1:string,arg2:string):Promise<void>;
 
@@ -114,3 +118,5 @@ export function SetProfile(arg1:string):Promise<void>;
 export function StartLogin(arg1:string,arg2:number):Promise<void>;
 
 export function StopAgent():Promise<void>;
+
+export function WriteWorkspaceFile(arg1:string,arg2:string):Promise<void>;
