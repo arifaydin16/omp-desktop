@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { HeaderBar } from './components/HeaderBar';
 import { AgentStudio } from './components/AgentStudio';
 import { SessionsDrawer } from './components/SessionsDrawer';
@@ -7,32 +7,108 @@ import { SettingsDialog } from './components/SettingsDialog';
 import { SkillsDrawer } from './components/SkillsDrawer';
 import { UsageDialog } from './components/UsageDialog';
 import { WorkspaceSessionsSidebar } from './components/WorkspaceSessionsSidebar';
-import { ChatMessage, AgentRunOptions, SessionSummary, ModelEntry, UpdateStatus, ToolCall } from './types';
-import { splitThinkingAndResponse } from './utils/textParser';
+import { Rune } from './components/Rune';
+import { ChatMessage, AgentRunOptions, SessionSummary, ModelEntry, UpdateStatus, ToolCall, ContentBlock } from './types';
+import { splitThinkingAndResponse, parseSessionTranscript } from './utils/textParser';
 import * as AppApi from '../wailsjs/go/main/App';
 import { EventsOn } from '../wailsjs/runtime/runtime';
+
+export interface InstancePaneState {
+  id: string;
+  title: string;
+  cwd: string;
+  messages: ChatMessage[];
+  sessionId: string;
+  attachedFiles: string[];
+  selectedModel: string;
+  isWorking: boolean;
+  fullSessionMessages?: ChatMessage[];
+  displayedMessageCount?: number;
+  ticketId?: string;
+}
+
+const DEFAULT_PANES: InstancePaneState[] = [
+  { id: 'main', title: 'OMP #1', cwd: '', messages: [], sessionId: '', attachedFiles: [], selectedModel: 'google-antigravity/gemini-3.8-flash', isWorking: false },
+  { id: 'inst-2', title: 'OMP #2', cwd: '', messages: [], sessionId: '', attachedFiles: [], selectedModel: 'google-antigravity/gemini-3.8-flash', isWorking: false },
+  { id: 'inst-3', title: 'OMP #3', cwd: '', messages: [], sessionId: '', attachedFiles: [], selectedModel: 'google-antigravity/gemini-3.8-flash', isWorking: false },
+  { id: 'inst-4', title: 'OMP #4', cwd: '', messages: [], sessionId: '', attachedFiles: [], selectedModel: 'google-antigravity/gemini-3.8-flash', isWorking: false },
+  { id: 'inst-5', title: 'OMP #5', cwd: '', messages: [], sessionId: '', attachedFiles: [], selectedModel: 'google-antigravity/gemini-3.8-flash', isWorking: false },
+  { id: 'inst-6', title: 'OMP #6', cwd: '', messages: [], sessionId: '', attachedFiles: [], selectedModel: 'google-antigravity/gemini-3.8-flash', isWorking: false },
+];
 
 export function App() {
   const [binaryVersion, setBinaryVersion] = useState('');
   const [cwd, setCwd] = useState('');
   const [profile, setProfile] = useState('');
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [currentSessionId, setCurrentSessionId] = useState<string>('');
-  const [attachedFiles, setAttachedFiles] = useState<string[]>([]);
   const [availableModels, setAvailableModels] = useState<ModelEntry[]>([]);
   const [selectedModel, setSelectedModel] = useState('google-antigravity/gemini-3.8-flash');
   const [activeDrawer, setActiveDrawer] = useState<string | null>(null);
-  const [isWorking, setIsWorking] = useState(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [theme, setTheme] = useState<string>(() => localStorage.getItem('omp_theme') || 'cyber-violet');
-  const [settingsTab, setSettingsTab] = useState<'general' | 'auth' | 'extra'>('general');
+  const [settingsTab, setSettingsTab] = useState<'general' | 'auth' | 'extra' | 'api' | 'plugins'>('general');
+
+  // Focus Mode & Multi-Instance Panes State
+  const [isFocusMode, setIsFocusMode] = useState<boolean>(() => {
+    return localStorage.getItem('omp_focus_mode') === 'true';
+  });
+  const [splitCount, setSplitCount] = useState<number>(() => {
+    const saved = localStorage.getItem('omp_split_count');
+    const parsed = saved ? parseInt(saved, 10) : 1;
+    return [1, 2, 4, 5, 6].includes(parsed) ? parsed : 1;
+  });
+  const [activePaneId, setActivePaneId] = useState<string>('main');
+  const [panes, setPanes] = useState<InstancePaneState[]>(DEFAULT_PANES);
 
   // Synchronize dynamic theme to document element
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
     localStorage.setItem('omp_theme', theme);
   }, [theme]);
+
+  // Persist Focus Mode and Split Count
+  useEffect(() => {
+    localStorage.setItem('omp_focus_mode', String(isFocusMode));
+  }, [isFocusMode]);
+
+  useEffect(() => {
+    localStorage.setItem('omp_split_count', String(splitCount));
+  }, [splitCount]);
+  // Active Memory Optimizer: Trim RAM working sets when window loses focus or is hidden
+  useEffect(() => {
+    const handleBlurOrHide = () => {
+      AppApi.TrimMemory().catch(() => {});
+    };
+    window.addEventListener('blur', handleBlurOrHide);
+    const handleVis = () => {
+      if (document.hidden) {
+        handleBlurOrHide();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVis);
+    return () => {
+      window.removeEventListener('blur', handleBlurOrHide);
+      document.removeEventListener('visibilitychange', handleVis);
+    };
+  }, []);
+
+  // Propagate default CWD & Model to initial panes
+  useEffect(() => {
+    if (cwd) {
+      setPanes((prev) =>
+        prev.map((p) => (!p.cwd ? { ...p, cwd } : p))
+      );
+    }
+  }, [cwd]);
+
+  useEffect(() => {
+    if (selectedModel) {
+      setPanes((prev) =>
+        prev.map((p) => (!p.selectedModel ? { ...p, selectedModel } : p))
+      );
+    }
+  }, [selectedModel]);
+
   // Initialize app data and event listeners
   useEffect(() => {
     // 1. Fetch Binary info
@@ -40,6 +116,12 @@ export function App() {
       .then((info) => {
         if (info && info.version) {
           setBinaryVersion(info.version);
+        }
+        if (info && info.cwd) {
+          setCwd(info.cwd);
+          setPanes((prev) =>
+            prev.map((p) => (!p.cwd ? { ...p, cwd: info.cwd } : p))
+          );
         }
       })
       .catch((err: unknown) => console.error('GetBinaryInfo err:', err));
@@ -61,6 +143,7 @@ export function App() {
         }
       })
       .catch((err: unknown) => console.error('GetUpdateStatus err:', err));
+
     // 4. Fetch Current Profile
     AppApi.GetCurrentProfile()
       .then(async (p) => {
@@ -69,24 +152,33 @@ export function App() {
           const roles = await AppApi.GetModelRoles();
           if (roles && roles['default']) {
             const def = roles['default'].split(':')[0];
-            if (def) setSelectedModel(def);
+            if (def) {
+              setSelectedModel(def);
+              setPanes((prev) =>
+                prev.map((p) => (!p.selectedModel ? { ...p, selectedModel: def } : p))
+              );
+            }
           }
         } catch {}
       })
       .catch((err: unknown) => console.error('GetCurrentProfile err:', err));
 
-
-    // 4. Setup Wails Event Listeners
+    // 5. Setup Wails Event Listeners (Routed by instanceId)
     const unsubStatus = EventsOn('agent:status', (data: unknown) => {
       if (data && typeof data === 'object') {
         const obj = data as Record<string, unknown>;
-        setIsWorking(obj.status === 'running');
+        const targetId = (typeof obj.instanceId === 'string' && obj.instanceId) ? obj.instanceId : 'main';
+        const running = obj.status === 'running';
+        setPanes((prev) =>
+          prev.map((p) => (p.id === targetId ? { ...p, isWorking: running } : p))
+        );
       }
     });
 
     const unsubStream = EventsOn('agent:stream', (data: unknown) => {
       if (!data || typeof data !== 'object') return;
       const obj = data as Record<string, unknown>;
+      const targetId = (typeof obj.instanceId === 'string' && obj.instanceId) ? obj.instanceId : 'main';
       const streamType = typeof obj.type === 'string' ? obj.type : 'stdout';
       const content = typeof obj.content === 'string' ? obj.content : '';
       if (typeof obj.content !== 'string') return;
@@ -98,148 +190,158 @@ export function App() {
         return;
       }
 
-      if (
-        streamType === 'stderr' &&
-        (trimmed.startsWith('Working') || trimmed.includes('Working...') || trimmed.includes('Still starting'))
-      ) {
-        setMessages((prev) => {
-          if (prev.length === 0) return prev;
-          const last = prev[prev.length - 1];
-          if (last.role === 'assistant') {
-            return [
-              ...prev.slice(0, -1),
-              {
-                ...last,
-                workingStatus: trimmed,
-              },
-            ];
-          }
-          return prev;
-        });
-        return;
-      }
+      setPanes((prev) =>
+        prev.map((pane) => {
+          if (pane.id !== targetId || pane.messages.length === 0) return pane;
+          const msgs = [...pane.messages];
+          const last = msgs[msgs.length - 1];
+          if (last.role !== 'assistant') return pane;
 
-      // If content is literally just "Working...", also isolate it into workingStatus
-      if (trimmed === 'Working...' || trimmed === 'Working…') {
-        setMessages((prev) => {
-          if (prev.length === 0) return prev;
-          const last = prev[prev.length - 1];
-          if (last.role === 'assistant') {
-            return [
-              ...prev.slice(0, -1),
-              {
-                ...last,
-                workingStatus: trimmed,
-              },
-            ];
-          }
-          return prev;
-        });
-        return;
-      }
-      // Direct typed thinking delta
-      if (streamType === 'thinking') {
-        setMessages((prev) => {
-          if (prev.length === 0) return prev;
-          const last = prev[prev.length - 1];
-          if (last.role === 'assistant') {
-            return [
-              ...prev.slice(0, -1),
-              {
-                ...last,
-                thinking: (last.thinking || '') + content,
-                workingStatus: undefined,
-              },
-            ];
-          }
-          return prev;
-        });
-        return;
-      }
-
-      // Direct typed text delta
-      if (streamType === 'text') {
-        setMessages((prev) => {
-          if (prev.length === 0) return prev;
-          const last = prev[prev.length - 1];
-          if (last.role === 'assistant') {
-            return [
-              ...prev.slice(0, -1),
-              {
-                ...last,
-                text: (last.text || '') + content,
-                workingStatus: undefined,
-              },
-            ];
-          }
-          return prev;
-        });
-        return;
-      }
-
-      setMessages((prev) => {
-        if (prev.length === 0) return prev;
-        const last = prev[prev.length - 1];
-
-        // If the last message is from assistant, append stream
-        if (last.role === 'assistant') {
-          // Check for thinking blocks
-          if (content.startsWith("I'm thinking") || content.includes("thinking through")) {
-            return [
-              ...prev.slice(0, -1),
-              {
-                ...last,
-                thinking: (last.thinking ? last.thinking + '\n' : '') + content,
-                workingStatus: undefined,
-              },
-            ];
-          }
-
-          return [
-            ...prev.slice(0, -1),
-            {
+          // Transient working status
+          if (
+            (streamType === 'stderr' && (trimmed.startsWith('Working') || trimmed.includes('Working...') || trimmed.includes('Still starting'))) ||
+            trimmed === 'Working...' || trimmed === 'Working…'
+          ) {
+            msgs[msgs.length - 1] = {
               ...last,
-              text: (last.text ? last.text + '\n' : '') + content,
-              workingStatus: undefined,
-            },
-          ];
-        }
+              workingStatus: trimmed,
+            };
+            return { ...pane, messages: msgs };
+          }
 
-        // Otherwise create new assistant response
-        return [
-          ...prev,
-          {
-            id: 'msg_' + Date.now(),
-            role: 'assistant',
-            text: content,
-            timestamp: new Date().toISOString(),
-          },
-        ];
-      });
+          // Direct typed thinking delta
+          if (streamType === 'thinking') {
+            const currentBlocks = [...(last.blocks || [])];
+            const lastBlock = currentBlocks[currentBlocks.length - 1];
+            if (lastBlock && lastBlock.type === 'thinking') {
+              currentBlocks[currentBlocks.length - 1] = {
+                ...lastBlock,
+                content: lastBlock.content + content,
+              };
+            } else {
+              currentBlocks.push({
+                id: 'blk_th_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
+                type: 'thinking',
+                content,
+                timestamp: Date.now(),
+              });
+            }
+
+            msgs[msgs.length - 1] = {
+              ...last,
+              thinking: (last.thinking || '') + content,
+              blocks: currentBlocks,
+              workingStatus: undefined,
+            };
+            return { ...pane, messages: msgs };
+          }
+
+          // Direct typed text delta
+          if (streamType === 'text') {
+            const currentBlocks = [...(last.blocks || [])];
+            const lastBlock = currentBlocks[currentBlocks.length - 1];
+            if (lastBlock && lastBlock.type === 'text') {
+              currentBlocks[currentBlocks.length - 1] = {
+                ...lastBlock,
+                content: lastBlock.content + content,
+              };
+            } else {
+              currentBlocks.push({
+                id: 'blk_tx_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
+                type: 'text',
+                content,
+                timestamp: Date.now(),
+              });
+            }
+
+            msgs[msgs.length - 1] = {
+              ...last,
+              text: (last.text || '') + content,
+              blocks: currentBlocks,
+              workingStatus: undefined,
+            };
+            return { ...pane, messages: msgs };
+          }
+
+          // Mixed stdout/stderr fallback
+          const prevText = last.text || '';
+          let newText = prevText;
+          let newThinking = last.thinking;
+          const currentBlocks = [...(last.blocks || [])];
+
+          if (content.includes('Thinking Process:')) {
+            const parts = content.split('Thinking Process:');
+            newThinking = (newThinking || '') + parts[1];
+            newText = prevText + parts[0];
+            if (parts[0]) {
+              const lastB = currentBlocks[currentBlocks.length - 1];
+              if (lastB && lastB.type === 'text') {
+                currentBlocks[currentBlocks.length - 1] = { ...lastB, content: lastB.content + parts[0] };
+              } else {
+                currentBlocks.push({ id: 'blk_tx_' + Date.now(), type: 'text', content: parts[0], timestamp: Date.now() });
+              }
+            }
+            if (parts[1]) {
+              currentBlocks.push({ id: 'blk_th_' + Date.now(), type: 'thinking', content: parts[1], timestamp: Date.now() });
+            }
+          } else if (newThinking !== undefined && !content.includes('\n\n') && streamType === 'stdout') {
+            newThinking += content;
+            const lastB = currentBlocks[currentBlocks.length - 1];
+            if (lastB && lastB.type === 'thinking') {
+              currentBlocks[currentBlocks.length - 1] = { ...lastB, content: lastB.content + content };
+            } else {
+              currentBlocks.push({ id: 'blk_th_' + Date.now(), type: 'thinking', content, timestamp: Date.now() });
+            }
+          } else {
+            newText = prevText + content;
+            const lastB = currentBlocks[currentBlocks.length - 1];
+            if (lastB && lastB.type === 'text') {
+              currentBlocks[currentBlocks.length - 1] = { ...lastB, content: lastB.content + content };
+            } else {
+              currentBlocks.push({ id: 'blk_tx_' + Date.now(), type: 'text', content, timestamp: Date.now() });
+            }
+          }
+
+          msgs[msgs.length - 1] = {
+            ...last,
+            text: newText,
+            thinking: newThinking,
+            blocks: currentBlocks,
+            workingStatus: undefined,
+          };
+          return { ...pane, messages: msgs };
+        })
+      );
     });
 
     const unsubCommand = EventsOn('agent:command', (data: unknown) => {
       if (data && typeof data === 'object') {
         const obj = data as Record<string, unknown>;
+        const targetId = (typeof obj.instanceId === 'string' && obj.instanceId) ? obj.instanceId : 'main';
         const cmdStr = typeof obj.command === 'string' ? obj.command : '';
-        setMessages((prev) => {
-          if (prev.length === 0) return prev;
-          const last = prev[prev.length - 1];
-          if (last.role === 'assistant') {
-            return [
-              ...prev.slice(0, -1),
-              { ...last, command: cmdStr },
-            ];
-          }
-          return prev;
-        });
+        setPanes((prev) =>
+          prev.map((pane) => {
+            if (pane.id !== targetId || pane.messages.length === 0) return pane;
+            const msgs = [...pane.messages];
+            const last = msgs[msgs.length - 1];
+            if (last.role === 'assistant') {
+              msgs[msgs.length - 1] = { ...last, command: cmdStr };
+              return { ...pane, messages: msgs };
+            }
+            return pane;
+          })
+        );
       }
     });
+
     const unsubSession = EventsOn('agent:session', (data: unknown) => {
       if (data && typeof data === 'object') {
         const obj = data as Record<string, unknown>;
+        const targetId = (typeof obj.instanceId === 'string' && obj.instanceId) ? obj.instanceId : 'main';
         if (typeof obj.sessionId === 'string' && obj.sessionId) {
-          setCurrentSessionId(obj.sessionId);
+          setPanes((prev) =>
+            prev.map((p) => (p.id === targetId ? { ...p, sessionId: obj.sessionId as string } : p))
+          );
         }
       }
     });
@@ -247,54 +349,90 @@ export function App() {
     const unsubToolStart = EventsOn('agent:tool_start', (data: unknown) => {
       if (!data || typeof data !== 'object') return;
       const obj = data as Record<string, unknown>;
+      const targetId = (typeof obj.instanceId === 'string' && obj.instanceId) ? obj.instanceId : 'main';
       const callId = String(obj.toolCallId || 'tc_' + Math.random().toString(36).slice(2));
       const toolName = String(obj.toolName || 'tool');
       const intent = typeof obj.intent === 'string' ? obj.intent : undefined;
       const args = (obj.args as Record<string, unknown> | string) || undefined;
 
-      setMessages((prev) => {
-        if (prev.length === 0) return prev;
-        const last = prev[prev.length - 1];
-        if (last.role === 'assistant') {
-          const currentCalls = last.toolCalls || [];
-          const existingIdx = currentCalls.findIndex((c) => c.id === callId);
-          let updatedCalls: ToolCall[];
-          if (existingIdx >= 0) {
-            updatedCalls = [...currentCalls];
-            updatedCalls[existingIdx] = {
-              ...updatedCalls[existingIdx],
-              tool: toolName,
-              intent: intent || updatedCalls[existingIdx].intent,
-              args: args || updatedCalls[existingIdx].args,
-              status: 'running',
-            };
-          } else {
-            updatedCalls = [
-              ...currentCalls,
-              {
-                id: callId,
+      setPanes((prev) =>
+        prev.map((pane) => {
+          if (pane.id !== targetId || pane.messages.length === 0) return pane;
+          const msgs = [...pane.messages];
+          const last = msgs[msgs.length - 1];
+          if (last.role === 'assistant') {
+            const currentCalls = last.toolCalls || [];
+            const existingIdx = currentCalls.findIndex((c) => c.id === callId);
+            const now = Date.now();
+            let updatedCalls: ToolCall[];
+            if (existingIdx >= 0) {
+              updatedCalls = [...currentCalls];
+              updatedCalls[existingIdx] = {
+                ...updatedCalls[existingIdx],
                 tool: toolName,
-                intent,
-                args,
+                intent: intent || updatedCalls[existingIdx].intent,
+                args: args || updatedCalls[existingIdx].args,
                 status: 'running',
-              },
-            ];
-          }
-          return [
-            ...prev.slice(0, -1),
-            {
+                timestamp: updatedCalls[existingIdx].timestamp || now,
+              };
+            } else {
+              updatedCalls = [
+                ...currentCalls,
+                {
+                  id: callId,
+                  tool: toolName,
+                  intent,
+                  args,
+                  status: 'running',
+                  timestamp: now,
+                },
+              ];
+            }
+
+            // Maintain chronological blocks
+            const currentBlocks = [...(last.blocks || [])];
+            const blockIdx = currentBlocks.findIndex((b) => b.type === 'tool' && b.call.id === callId);
+            const activeCall: ToolCall = {
+              id: callId,
+              tool: toolName,
+              intent: intent || (existingIdx >= 0 ? updatedCalls[existingIdx].intent : undefined),
+              args: args || (existingIdx >= 0 ? updatedCalls[existingIdx].args : undefined),
+              status: 'running',
+              timestamp: existingIdx >= 0 && updatedCalls[existingIdx].timestamp ? updatedCalls[existingIdx].timestamp : now,
+            };
+            if (blockIdx >= 0) {
+              const prevB = currentBlocks[blockIdx];
+              if (prevB.type === 'tool') {
+                currentBlocks[blockIdx] = {
+                  ...prevB,
+                  call: activeCall,
+                };
+              }
+            } else {
+              currentBlocks.push({
+                id: 'blk_tl_' + callId,
+                type: 'tool',
+                call: activeCall,
+                timestamp: now,
+              });
+            }
+
+            msgs[msgs.length - 1] = {
               ...last,
               toolCalls: updatedCalls,
-            },
-          ];
-        }
-        return prev;
-      });
+              blocks: currentBlocks,
+            };
+            return { ...pane, messages: msgs };
+          }
+          return pane;
+        })
+      );
     });
 
     const unsubToolUpdate = EventsOn('agent:tool_update', (data: unknown) => {
       if (!data || typeof data !== 'object') return;
       const obj = data as Record<string, unknown>;
+      const targetId = (typeof obj.instanceId === 'string' && obj.instanceId) ? obj.instanceId : 'main';
       const callId = String(obj.toolCallId || '');
       if (!callId) return;
 
@@ -309,35 +447,51 @@ export function App() {
       }
       const details = (partial?.details as Record<string, unknown>) || (obj.details as Record<string, unknown>) || undefined;
 
-      setMessages((prev) => {
-        if (prev.length === 0) return prev;
-        const last = prev[prev.length - 1];
-        if (last.role === 'assistant' && last.toolCalls) {
-          const updated = last.toolCalls.map((tc) => {
-            if (tc.id === callId) {
-              return {
-                ...tc,
-                result: resultText || tc.result,
-                details: details || tc.details,
-              };
-            }
-            return tc;
-          });
-          return [
-            ...prev.slice(0, -1),
-            {
+      setPanes((prev) =>
+        prev.map((pane) => {
+          if (pane.id !== targetId || pane.messages.length === 0) return pane;
+          const msgs = [...pane.messages];
+          const last = msgs[msgs.length - 1];
+          if (last.role === 'assistant' && last.toolCalls) {
+            const updated = last.toolCalls.map((tc) => {
+              if (tc.id === callId) {
+                return {
+                  ...tc,
+                  result: resultText || tc.result,
+                  details: details || tc.details,
+                };
+              }
+              return tc;
+            });
+            const currentBlocks = (last.blocks || []).map((b) => {
+              if (b.type === 'tool' && b.call.id === callId) {
+                return {
+                  ...b,
+                  call: {
+                    ...b.call,
+                    result: resultText || b.call.result,
+                    details: details || b.call.details,
+                  },
+                };
+              }
+              return b;
+            });
+            msgs[msgs.length - 1] = {
               ...last,
               toolCalls: updated,
-            },
-          ];
-        }
-        return prev;
-      });
+              blocks: currentBlocks,
+            };
+            return { ...pane, messages: msgs };
+          }
+          return pane;
+        })
+      );
     });
 
     const unsubToolEnd = EventsOn('agent:tool_end', (data: unknown) => {
       if (!data || typeof data !== 'object') return;
       const obj = data as Record<string, unknown>;
+      const targetId = (typeof obj.instanceId === 'string' && obj.instanceId) ? obj.instanceId : 'main';
       const callId = String(obj.toolCallId || '');
       if (!callId) return;
 
@@ -353,62 +507,85 @@ export function App() {
       }
       const details = (res?.details as Record<string, unknown>) || (obj.details as Record<string, unknown>) || undefined;
 
-      setMessages((prev) => {
-        if (prev.length === 0) return prev;
-        const last = prev[prev.length - 1];
-        if (last.role === 'assistant' && last.toolCalls) {
-          const updated = last.toolCalls.map((tc) => {
-            if (tc.id === callId) {
-              return {
-                ...tc,
-                result: resultText || tc.result,
-                details: details || tc.details,
-                isError,
-                status: 'completed' as const,
-              };
-            }
-            return tc;
-          });
-          return [
-            ...prev.slice(0, -1),
-            {
+      setPanes((prev) =>
+        prev.map((pane) => {
+          if (pane.id !== targetId || pane.messages.length === 0) return pane;
+          const msgs = [...pane.messages];
+          const last = msgs[msgs.length - 1];
+          if (last.role === 'assistant' && last.toolCalls) {
+            const updated = last.toolCalls.map((tc) => {
+              if (tc.id === callId) {
+                return {
+                  ...tc,
+                  result: resultText || tc.result,
+                  details: details || tc.details,
+                  isError,
+                  status: 'completed' as const,
+                };
+              }
+              return tc;
+            });
+            const currentBlocks = (last.blocks || []).map((b) => {
+              if (b.type === 'tool' && b.call.id === callId) {
+                return {
+                  ...b,
+                  call: {
+                    ...b.call,
+                    result: resultText || b.call.result,
+                    details: details || b.call.details,
+                    isError,
+                    status: 'completed' as const,
+                  },
+                };
+              }
+              return b;
+            });
+            msgs[msgs.length - 1] = {
               ...last,
               toolCalls: updated,
-            },
-          ];
-        }
-        return prev;
-      });
+              blocks: currentBlocks,
+            };
+            return { ...pane, messages: msgs };
+          }
+          return pane;
+        })
+      );
     });
+
     const unsubDone = EventsOn('agent:done', (data: unknown) => {
-      setIsWorking(false);
       if (data && typeof data === 'object') {
         const obj = data as Record<string, unknown>;
+        const targetId = (typeof obj.instanceId === 'string' && obj.instanceId) ? obj.instanceId : 'main';
         const exitCode = typeof obj.exitCode === 'number' ? obj.exitCode : 0;
-        if (typeof obj.sessionId === 'string' && obj.sessionId) {
-          setCurrentSessionId(obj.sessionId);
-        }
-        setMessages((prev) => {
-          if (prev.length === 0) return prev;
-          const last = prev[prev.length - 1];
-          if (last.role === 'assistant') {
-            const split = splitThinkingAndResponse(last.text || '');
-            const finalThinking = last.thinking || split.thinking || undefined;
-            const finalResponse = split.response || last.text || '';
+        const sessId = typeof obj.sessionId === 'string' ? obj.sessionId : '';
 
-            return [
-              ...prev.slice(0, -1),
-              {
-                ...last,
-                text: finalResponse,
-                thinking: finalThinking,
-                exitCode,
-                workingStatus: undefined,
-              },
-            ];
-          }
-          return prev;
-        });
+        setPanes((prev) =>
+          prev.map((pane) => {
+            if (pane.id !== targetId) return pane;
+            const msgs = [...pane.messages];
+            if (msgs.length > 0) {
+              const last = msgs[msgs.length - 1];
+              if (last.role === 'assistant') {
+                const split = splitThinkingAndResponse(last.text || '');
+                const finalThinking = last.thinking || split.thinking || undefined;
+                const finalResponse = split.response || last.text || '';
+                msgs[msgs.length - 1] = {
+                  ...last,
+                  text: finalResponse,
+                  thinking: finalThinking,
+                  exitCode,
+                  workingStatus: undefined,
+                };
+              }
+            }
+            return {
+              ...pane,
+              isWorking: false,
+              sessionId: sessId || pane.sessionId,
+              messages: msgs,
+            };
+          })
+        );
       }
     });
 
@@ -417,6 +594,56 @@ export function App() {
         setUpdateStatus(data as UpdateStatus);
       }
     });
+    const unsubTaskStarted = EventsOn('remote_api:task_started', (data: unknown) => {
+      if (!data || typeof data !== 'object') return;
+      const obj = data as Record<string, unknown>;
+      const targetId = (typeof obj.instanceId === 'string' && obj.instanceId) ? obj.instanceId : 'main';
+      const promptText = typeof obj.prompt === 'string' ? obj.prompt : '';
+      const taskCwd = typeof obj.cwd === 'string' ? obj.cwd : '';
+      const ticketId = obj.ticketId ? String(obj.ticketId) : '';
+      const company = typeof obj.company === 'string' ? obj.company : '';
+
+      // Automatically switch to the active pane & close any open drawer to show session in chat
+      setActivePaneId(targetId);
+      setActiveDrawer(null);
+      if (taskCwd) {
+        setCwd(taskCwd);
+      }
+
+      const userMsg: ChatMessage = {
+        id: 'usr_remote_' + Date.now(),
+        role: 'user',
+        text: promptText,
+        timestamp: new Date().toISOString(),
+      };
+
+      const titlePrefix = ticketId ? `Ticket #${ticketId}` : (company ? `${company}` : 'Uzak Görev');
+      const assistantMsg: ChatMessage = {
+        id: 'asst_remote_' + Date.now(),
+        role: 'assistant',
+        text: '',
+        timestamp: new Date().toISOString(),
+        toolCalls: [],
+        blocks: [],
+        workingStatus: ticketId ? `Ticket #${ticketId} devralındı, çalışıyor...` : 'Görev devralındı, çalışıyor...',
+      };
+
+      setPanes((prev) =>
+        prev.map((p) => {
+          if (p.id !== targetId) return p;
+          return {
+            ...p,
+            cwd: taskCwd || p.cwd,
+            title: titlePrefix,
+            ticketId: ticketId || p.ticketId,
+            messages: [...p.messages, userMsg, assistantMsg],
+            attachedFiles: [],
+            isWorking: true,
+          };
+        })
+      );
+    });
+
 
     return () => {
       unsubStatus();
@@ -428,44 +655,122 @@ export function App() {
       unsubToolEnd();
       unsubDone();
       unsubUpdateStatus();
+      unsubTaskStarted();
     };
   }, []);
 
+  // Global active pane
+  const activePane = useMemo(() => {
+    return panes.find((p) => p.id === activePaneId) || panes[0];
+  }, [panes, activePaneId]);
+
+  const isAnyWorking = useMemo(() => {
+    return panes.some((p) => p.isWorking);
+  }, [panes]);
+
+  // Layout Grid Class Helper
+  const getGridClass = (count: number) => {
+    switch (count) {
+      case 2:
+        return 'grid grid-cols-1 md:grid-cols-2 grid-rows-1';
+      case 4:
+        return 'grid grid-cols-1 md:grid-cols-2 grid-rows-2';
+      case 5:
+        return 'grid grid-cols-6 grid-rows-2';
+      case 6:
+        return 'grid grid-cols-1 md:grid-cols-3 grid-rows-2';
+      default:
+        return 'grid grid-cols-1 grid-rows-1';
+    }
+  };
+
+  const getPaneColSpan = (count: number, index: number) => {
+    if (count === 5) {
+      return index < 2 ? 'col-span-3' : 'col-span-2';
+    }
+    return '';
+  };
+
+  // Directory Selection
   const handleSelectCwd = async () => {
     try {
       const selected = await AppApi.SelectDirectory();
       if (selected) {
         setCwd(selected);
+        setPanes((prev) =>
+          prev.map((p) => (p.id === activePaneId || !p.cwd ? { ...p, cwd: selected } : p))
+        );
       }
     } catch (err: unknown) {
       console.error('SelectDirectory err:', err);
     }
   };
 
-  const handleSelectFiles = async () => {
+  const handleSelectPaneCwd = async (paneId: string) => {
+    try {
+      const selected = await AppApi.SelectDirectory();
+      if (selected) {
+        setPanes((prev) =>
+          prev.map((p) => (p.id === paneId ? { ...p, cwd: selected } : p))
+        );
+        if (paneId === 'main' || paneId === activePaneId) {
+          setCwd(selected);
+        }
+      }
+    } catch (err: unknown) {
+      console.error('SelectDirectory err:', err);
+    }
+  };
+
+  // Attachments per pane
+  const handleSelectPaneFiles = async (paneId: string) => {
     try {
       const files = await AppApi.SelectFiles();
       if (files && files.length > 0) {
-        setAttachedFiles((prev) => [...prev, ...files]);
+        setPanes((prev) =>
+          prev.map((p) =>
+            p.id === paneId ? { ...p, attachedFiles: [...p.attachedFiles, ...files] } : p
+          )
+        );
       }
     } catch (err: unknown) {
       console.error('SelectFiles err:', err);
     }
   };
 
-  const handleRemoveFile = (index: number) => {
-    setAttachedFiles((prev) => prev.filter((_, i) => i !== index));
+  const handleRemovePaneFile = (paneId: string, index: number) => {
+    setPanes((prev) =>
+      prev.map((p) =>
+        p.id === paneId
+          ? { ...p, attachedFiles: p.attachedFiles.filter((_, i) => i !== index) }
+          : p
+      )
+    );
   };
-  const handleAddFile = useCallback((path: string) => {
-    setAttachedFiles((prev) => (prev.includes(path) ? prev : [...prev, path]));
+
+  const handleAddPaneFile = useCallback((paneId: string, path: string) => {
+    setPanes((prev) =>
+      prev.map((p) =>
+        p.id === paneId
+          ? {
+              ...p,
+              attachedFiles: p.attachedFiles.includes(path)
+                ? p.attachedFiles
+                : [...p.attachedFiles, path],
+            }
+          : p
+      )
+    );
   }, []);
 
-  const handleAddSystemMessage = useCallback((msg: ChatMessage) => {
-    setMessages((prev) => [...prev, msg]);
+  const handleAddPaneSystemMessage = useCallback((paneId: string, msg: ChatMessage) => {
+    setPanes((prev) =>
+      prev.map((p) => (p.id === paneId ? { ...p, messages: [...p.messages, msg] } : p))
+    );
   }, []);
 
-
-  const handleSendMessage = async (opts: AgentRunOptions) => {
+  // Execution per pane
+  const handleSendMessage = async (opts: AgentRunOptions, paneId: string = 'main') => {
     const userMsg: ChatMessage = {
       id: 'usr_' + Date.now(),
       role: 'user',
@@ -479,43 +784,86 @@ export function App() {
       role: 'assistant',
       text: '',
       timestamp: new Date().toISOString(),
+      toolCalls: [],
+      blocks: [],
     };
 
-    setMessages((prev) => [...prev, userMsg, assistantMsgPlaceholder]);
-    setAttachedFiles([]);
-    setIsWorking(true);
+    const currentPane = panes.find((p) => p.id === paneId);
+    const targetCwd = opts.cwd || currentPane?.cwd || cwd;
+
+    setPanes((prev) =>
+      prev.map((p) => {
+        if (p.id !== paneId) return p;
+        return {
+          ...p,
+          messages: [...p.messages, userMsg, assistantMsgPlaceholder],
+          attachedFiles: [],
+          isWorking: true,
+        };
+      })
+    );
 
     try {
-      await AppApi.ExecuteAgent(opts);
+      await AppApi.ExecuteAgent({
+        ...opts,
+        instanceId: paneId,
+        cwd: targetCwd,
+      });
     } catch (err: unknown) {
       console.error('ExecuteAgent err:', err);
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: 'err_' + Date.now(),
-          role: 'system',
-          text: 'Hata: ' + String(err),
-          timestamp: new Date().toISOString(),
-        },
-      ]);
-      setIsWorking(false);
+      setPanes((prev) =>
+        prev.map((p) => {
+          if (p.id !== paneId) return p;
+          return {
+            ...p,
+            messages: [
+              ...p.messages,
+              {
+                id: 'err_' + Date.now(),
+                role: 'system',
+                text: 'Hata: ' + String(err),
+                timestamp: new Date().toISOString(),
+              },
+            ],
+            isWorking: false,
+          };
+        })
+      );
     }
   };
 
-  const handleStopAgent = async () => {
+  const handleStopAgent = async (paneId: string = 'main') => {
     try {
-      await AppApi.StopAgent();
-      setIsWorking(false);
+      await AppApi.StopAgentInstance(paneId);
+      setPanes((prev) =>
+        prev.map((p) => (p.id === paneId ? { ...p, isWorking: false } : p))
+      );
     } catch (err: unknown) {
       console.error('StopAgent err:', err);
     }
   };
 
-  const handleSendStdin = async (input: string) => {
+  const handleSendStdin = async (input: string, paneId: string = 'main') => {
     try {
-      await AppApi.SendStdin(input);
+      await AppApi.SendStdinInstance(paneId, input);
     } catch (err: unknown) {
       console.error('SendStdin err:', err);
+    }
+  };
+
+  const handleClearPaneConsole = (paneId: string) => {
+    setPanes((prev) =>
+      prev.map((p) => (p.id === paneId ? { ...p, messages: [], sessionId: '' } : p))
+    );
+    AppApi.ClearActiveSessionInstance(paneId).catch(() => {});
+  };
+
+  const handleSelectPaneModel = (paneId: string, model: string) => {
+    setPanes((prev) =>
+      prev.map((p) => (p.id === paneId ? { ...p, selectedModel: model } : p))
+    );
+    if (paneId === activePaneId) {
+      setSelectedModel(model);
     }
   };
 
@@ -539,45 +887,51 @@ export function App() {
   };
 
   const handleResumeSession = async (session: SessionSummary) => {
-    setCwd(session.cwd || '');
-    setCurrentSessionId(session.id || '');
+    const targetId = activePaneId || 'main';
+    if (session.cwd) {
+      setCwd(session.cwd);
+    }
+    setPanes((prev) =>
+      prev.map((p) =>
+        p.id === targetId
+          ? {
+              ...p,
+              cwd: session.cwd || p.cwd || cwd,
+              sessionId: session.id || '',
+              selectedModel: session.model || p.selectedModel || selectedModel,
+            }
+          : p
+      )
+    );
     if (session.id) {
-      AppApi.SetActiveSessionID(session.id).catch(() => {});
+      AppApi.SetActiveSessionIDInstance(targetId, session.id).catch(() => {});
     }
     if (session.model) {
       setSelectedModel(session.model);
     }
+
     try {
       const detail = await AppApi.GetSessionDetail(session.path);
       if (detail && detail.messages && detail.messages.length > 0) {
-        const parsedMsgs: ChatMessage[] = [];
-        for (const row of detail.messages) {
-          const rowType = row.type as string;
-          if (rowType === 'message') {
-            const role = (row.role as 'user' | 'assistant' | 'system') || 'assistant';
-            let text = '';
-            if (typeof row.content === 'string') {
-              text = row.content;
-            } else if (Array.isArray(row.content)) {
-              for (const part of row.content) {
-                if (typeof part === 'string') text += part;
-                else if (part && typeof part === 'object' && 'text' in (part as Record<string, unknown>)) {
-                  text += String((part as Record<string, unknown>).text || '');
-                }
-              }
-            }
-            if (text.trim()) {
-              parsedMsgs.push({
-                id: String(row.id || 'msg_' + Math.random().toString(36).slice(2)),
-                role,
-                text,
-                timestamp: String(row.timestamp || new Date().toISOString()),
-              });
-            }
-          }
-        }
+        const parsedMsgs = parseSessionTranscript(detail.messages);
         if (parsedMsgs.length > 0) {
-          setMessages(parsedMsgs);
+          const PAGE_SIZE = 25;
+          const total = parsedMsgs.length;
+          const initialCount = Math.min(PAGE_SIZE, total);
+          const initialMessages = parsedMsgs.slice(total - initialCount);
+
+          setPanes((prev) =>
+            prev.map((p) =>
+              p.id === targetId
+                ? {
+                    ...p,
+                    messages: initialMessages,
+                    fullSessionMessages: parsedMsgs,
+                    displayedMessageCount: initialCount,
+                  }
+                : p
+            )
+          );
           return;
         }
       }
@@ -586,37 +940,62 @@ export function App() {
     }
 
     // Fallback if empty or parsing failed
-    setMessages([
-      {
-        id: 'sys_' + Date.now(),
-        role: 'system',
-        text: `Oturum yüklendi: ${session.title} (${session.id})`,
-        timestamp: new Date().toISOString(),
-      },
-    ]);
+    setPanes((prev) =>
+      prev.map((p) =>
+        p.id === targetId
+          ? {
+              ...p,
+              messages: [
+                {
+                  id: 'sys_' + Date.now(),
+                  role: 'system',
+                  text: `Oturum yüklendi: ${session.title} (${session.id})`,
+                  timestamp: new Date().toISOString(),
+                },
+              ],
+            }
+          : p
+      )
+    );
   };
+  const handleLoadOlderMessages = useCallback((paneId: string) => {
+    setPanes((prev) =>
+      prev.map((p) => {
+        if (p.id !== paneId) return p;
+        const full = p.fullSessionMessages;
+        if (!full || full.length === 0) return p;
+        const currentCount = p.displayedMessageCount || p.messages.length;
+        if (currentCount >= full.length) return p;
+
+        const PAGE_SIZE = 25;
+        const newCount = Math.min(full.length, currentCount + PAGE_SIZE);
+        const sliced = full.slice(full.length - newCount);
+
+        return {
+          ...p,
+          messages: sliced,
+          displayedMessageCount: newCount,
+        };
+      })
+    );
+  }, []);
 
   const handleNewSession = () => {
-    setMessages([]);
-    setAttachedFiles([]);
-    setCurrentSessionId('');
-    AppApi.ClearActiveSession().catch(() => {});
+    const targetId = activePaneId || 'main';
+    setPanes((prev) =>
+      prev.map((p) =>
+        p.id === targetId
+          ? { ...p, messages: [], attachedFiles: [], sessionId: '', fullSessionMessages: [], displayedMessageCount: 0 }
+          : p
+      )
+    );
+    AppApi.ClearActiveSessionInstance(targetId).catch(() => {});
   };
+
   const handleToggleDrawer = (drawerName: string) => {
     setActiveDrawer((prev) => (prev === drawerName ? null : drawerName));
   };
 
-  const handleRefreshModels = async () => {
-    try {
-      await AppApi.RefreshModels();
-      const cat = await AppApi.GetModels();
-      if (cat && Array.isArray(cat.models)) {
-        setAvailableModels(cat.models);
-      }
-    } catch (err: unknown) {
-      console.error('RefreshModels err:', err);
-    }
-  };
   const handleProfileChange = async (newProf: string) => {
     setProfile(newProf);
     try {
@@ -631,10 +1010,11 @@ export function App() {
         if (def) setSelectedModel(def);
       }
     } catch (e) {
-      console.error('Failed to switch profile:', e);
+      console.error(e);
     }
   };
-  // Global Keyboard Shortcuts (Ctrl+N, Ctrl+B, Ctrl+,, Ctrl+Shift+U/S/D, Ctrl+K, Escape)
+
+  // Keyboard Shortcuts
   useEffect(() => {
     const handleGlobalKeyDown = (e: KeyboardEvent) => {
       const isCmdOrCtrl = e.ctrlKey || e.metaKey;
@@ -648,7 +1028,14 @@ export function App() {
         }
       }
 
-      // Ctrl + N: New Session
+      // Ctrl + Shift + F: Toggle Focus Mode
+      if (isCmdOrCtrl && e.shiftKey && e.key.toLowerCase() === 'f') {
+        e.preventDefault();
+        setIsFocusMode((prev) => !prev);
+        return;
+      }
+
+      // Ctrl + N: New Session in active pane
       if (isCmdOrCtrl && e.key.toLowerCase() === 'n' && !e.shiftKey) {
         e.preventDefault();
         handleNewSession();
@@ -705,103 +1092,188 @@ export function App() {
 
     window.addEventListener('keydown', handleGlobalKeyDown);
     return () => window.removeEventListener('keydown', handleGlobalKeyDown);
-  }, [activeDrawer]);
-
+  }, [activeDrawer, activePaneId]);
 
   return (
-    <div className="flex flex-col h-screen w-screen bg-omp-bg text-omp-text overflow-hidden font-sans p-2 sm:p-2.5 md:p-3">
-      {/* Framed Application Window (Padding left & right, high elevation border) */}
-      <div className="flex flex-col flex-1 h-full w-full border border-omp-border rounded-[3px] bg-omp-surface overflow-hidden shadow-2xl relative">
-        {/* Top Navigation & Auto-Update Bar */}
-        <HeaderBar
-          binaryVersion={binaryVersion}
-          cwd={cwd}
-          onSelectCwd={handleSelectCwd}
-          profile={profile}
-          onChangeProfile={handleProfileChange}
-          updateStatus={updateStatus}
-          onCheckUpdates={handleCheckUpdates}
-          onInstallUpdate={handleInstallUpdate}
-          activeDrawer={activeDrawer}
-          onToggleDrawer={handleToggleDrawer}
-          isWorking={isWorking}
-          isSidebarOpen={isSidebarOpen}
-          onToggleSidebar={() => setIsSidebarOpen((prev) => !prev)}
-          theme={theme}
-          onSelectTheme={setTheme}
-        />
+    <div className={`flex flex-col h-screen w-screen bg-omp-bg text-omp-text overflow-hidden font-sans ${isFocusMode ? 'p-0' : 'p-2 sm:p-2.5 md:p-3'}`}>
+      {/* Framed Application Window */}
+      <div className={`flex flex-col flex-1 h-full w-full ${isFocusMode ? 'border-0 rounded-none' : 'border border-omp-border rounded-[3px] shadow-2xl'} bg-omp-surface overflow-hidden relative`}>
+        {/* Top Bar: Minimal Focus Bar or Full Swiss HeaderBar */}
+        {isFocusMode ? (
+          <header className="h-10 border-b border-omp-border bg-omp-surface px-3 flex items-center justify-between select-none shrink-0 font-mono text-xs z-10">
+            {/* LEFT: Dizin Seçme Butonu */}
+            <div className="flex items-center space-x-2.5 truncate">
+              <div className="w-6 h-6 bg-omp-accent text-white flex items-center justify-center font-bold text-xs rounded-[2px] shadow-xs shrink-0">
+                π
+              </div>
+              <button
+                onClick={handleSelectCwd}
+                title={activePane.cwd || cwd || 'Çalışma dizini seç'}
+                className="flex items-center space-x-1.5 text-xs px-2.5 py-1 bg-omp-bg hover:bg-omp-surfaceLight border border-omp-border text-omp-text transition-colors truncate max-w-[280px] rounded-[2px] cursor-pointer"
+              >
+                <Rune name="documents-folder" size={13} className="text-omp-accent shrink-0" />
+                <span className="truncate font-mono text-[11px] font-bold text-white">
+                  DIR: {(activePane.cwd || cwd) ? (activePane.cwd || cwd).split('\\').pop() || (activePane.cwd || cwd).split('/').pop() || (activePane.cwd || cwd) : 'Dizin Seç'}
+                </span>
+              </button>
+              <span className="text-[10px] text-omp-muted uppercase tracking-wider hidden sm:inline">
+                ODAK // {activePane.title}
+              </span>
+            </div>
 
-        {/* Main Workspace (Workspace Sessions Sidebar + Agent Studio + Collapsible Side Panels) */}
-        <div className="flex-1 flex overflow-hidden relative">
-          {/* Workspace-based Sessions Sidebar (Default Closed) */}
-          <WorkspaceSessionsSidebar
-            isOpen={isSidebarOpen}
-            onToggle={() => setIsSidebarOpen(false)}
-            currentCwd={cwd}
-            onResumeSession={handleResumeSession}
-            onNewSession={handleNewSession}
+            {/* CENTER: Split Grid Switcher (1, 2, 4, 5, 6 Panes) */}
+            <div className="flex items-center space-x-1 bg-omp-bg p-0.5 border border-omp-border rounded-[2px]">
+              {[1, 2, 4, 5, 6].map((num) => (
+                <button
+                  key={num}
+                  onClick={() => setSplitCount(num)}
+                  className={`px-2 py-0.5 text-[10px] font-mono rounded-[2px] transition cursor-pointer ${
+                    splitCount === num
+                      ? 'bg-omp-accent text-white font-bold shadow-xs'
+                      : 'text-omp-muted hover:text-white hover:bg-omp-surfaceLight'
+                  }`}
+                  title={`${num} Ajan / Instance Split`}
+                >
+                  {num}P
+                </button>
+              ))}
+            </div>
+
+            {/* RIGHT: Odaktan Çık Butonu */}
+            <div className="flex items-center space-x-2">
+              <button
+                onClick={() => setIsFocusMode(false)}
+                title="Odak Modundan Çık (Ctrl+Shift+F)"
+                className="flex items-center space-x-1.5 px-2.5 py-1 rounded-[2px] border border-omp-border hover:border-red-500/50 bg-omp-bg hover:bg-red-500/10 text-omp-muted hover:text-red-300 font-mono text-[11px] transition cursor-pointer"
+              >
+                <Rune name="indicators-x" size={12} />
+                <span className="font-bold text-[10px]">ODAKTAN ÇIK</span>
+              </button>
+            </div>
+          </header>
+        ) : (
+          <HeaderBar
+            binaryVersion={binaryVersion}
+            cwd={cwd}
+            onSelectCwd={handleSelectCwd}
+            profile={profile}
+            onChangeProfile={handleProfileChange}
+            updateStatus={updateStatus}
+            onCheckUpdates={handleCheckUpdates}
+            onInstallUpdate={handleInstallUpdate}
+            activeDrawer={activeDrawer}
+            onToggleDrawer={handleToggleDrawer}
+            isWorking={isAnyWorking}
+            isSidebarOpen={isSidebarOpen}
+            onToggleSidebar={() => setIsSidebarOpen((prev) => !prev)}
+            theme={theme}
+            onSelectTheme={setTheme}
+            isFocusMode={isFocusMode}
+            onToggleFocusMode={() => setIsFocusMode(true)}
+            splitCount={splitCount}
+            onSelectSplitCount={setSplitCount}
           />
-        <AgentStudio
-          profile={profile}
-          messages={messages}
-          sessionId={currentSessionId}
-          isWorking={isWorking}
-          onSendMessage={handleSendMessage}
-          onStopAgent={handleStopAgent}
-          onSendStdin={handleSendStdin}
-          cwd={cwd}
-          onSelectCwd={handleSelectCwd}
-          onSelectFiles={handleSelectFiles}
-          attachedFiles={attachedFiles}
-          onRemoveFile={handleRemoveFile}
-          onAddFile={handleAddFile}
-          availableModels={availableModels}
-          selectedModel={selectedModel}
-          onSelectModel={setSelectedModel}
-          onClearConsole={() => {
-            setMessages([]);
-            setCurrentSessionId('');
-            AppApi.ClearActiveSession().catch(() => {});
-          }}
-          onOpenUsage={() => setActiveDrawer('usage')}
-          onOpenSkills={() => setActiveDrawer('skills')}
-          onOpenSessions={() => setActiveDrawer('sessions')}
-          onOpenSettings={(tab?: 'general' | 'auth' | 'extra') => {
-            if (tab) setSettingsTab(tab);
-            setActiveDrawer('settings');
-          }}
-          onAddSystemMessage={handleAddSystemMessage}
-          onOpenDevTools={() => setActiveDrawer('devtools')}
-        />
+        )}
 
-        {/* Collapsible Drawers */}
-        <SessionsDrawer
-          isOpen={activeDrawer === 'sessions'}
-          onClose={() => setActiveDrawer(null)}
-          onResumeSession={handleResumeSession}
-        />
-        <DevToolsDrawer
-          isOpen={activeDrawer === 'devtools'}
-          onClose={() => setActiveDrawer(null)}
-          cwd={cwd}
-        />
+        {/* Main Workspace (Workspace Sessions Sidebar + Split Agent Studio Panes) */}
+        <div className="flex-1 flex overflow-hidden relative">
+          {/* Workspace-based Sessions Sidebar (Only in Normal Mode) */}
+          {!isFocusMode && (
+            <WorkspaceSessionsSidebar
+              isOpen={isSidebarOpen}
+              onToggle={() => setIsSidebarOpen(false)}
+              currentCwd={cwd}
+              onResumeSession={handleResumeSession}
+              onNewSession={handleNewSession}
+            />
+          )}
 
-        <SettingsDialog
-          isOpen={activeDrawer === 'settings'}
-          onClose={() => setActiveDrawer(null)}
-          profile={profile}
-          initialTab={settingsTab}
-        />
+          {/* Panes Grid: Supports 1, 2, 4, 5, 6 OMP Instances */}
+          <div className={`flex-1 ${getGridClass(splitCount)} overflow-hidden gap-1 p-1 bg-omp-bg min-h-0 min-w-0`}>
+            {panes.slice(0, splitCount).map((pane, idx) => (
+              <div
+                key={pane.id}
+                onClick={() => setActivePaneId(pane.id)}
+                className={`flex flex-col h-full min-h-0 min-w-0 border rounded-[2px] overflow-hidden transition-all ${
+                  getPaneColSpan(splitCount, idx)
+                } ${
+                  activePaneId === pane.id
+                    ? 'border-omp-accent/80 shadow-md ring-1 ring-pink-400/30'
+                    : 'border-omp-border bg-omp-surface'
+                }`}
+              >
+                <AgentStudio
+                  instanceId={pane.id}
+                  title={splitCount > 1 ? `${pane.title} (${(pane.cwd || cwd || '').split('\\').pop() || (pane.cwd || cwd || '').split('/').pop() || 'cwd'})` : 'OH-MY-PI // STUDIO'}
+                  isFocusMode={isFocusMode}
+                  isActivePane={activePaneId === pane.id}
+                  isSplit={splitCount > 1}
+                  onFocusPane={() => setActivePaneId(pane.id)}
+                  profile={profile}
+                  messages={pane.messages}
+                  sessionId={pane.sessionId}
+                  isWorking={pane.isWorking}
+                  onSendMessage={(opts) => handleSendMessage(opts, pane.id)}
+                  onStopAgent={() => handleStopAgent(pane.id)}
+                  onSendStdin={(input) => handleSendStdin(input, pane.id)}
+                  cwd={pane.cwd || cwd}
+                  onSelectCwd={() => handleSelectPaneCwd(pane.id)}
+                  onSelectFiles={() => handleSelectPaneFiles(pane.id)}
+                  attachedFiles={pane.attachedFiles}
+                  onRemoveFile={(fileIdx) => handleRemovePaneFile(pane.id, fileIdx)}
+                  onAddFile={(path) => handleAddPaneFile(pane.id, path)}
+                  availableModels={availableModels}
+                  selectedModel={pane.selectedModel || selectedModel}
+                  onSelectModel={(m) => handleSelectPaneModel(pane.id, m)}
+                  onClearConsole={() => handleClearPaneConsole(pane.id)}
+                  onOpenUsage={() => setActiveDrawer('usage')}
+                  onOpenSkills={() => setActiveDrawer('skills')}
+                  onOpenSessions={() => setActiveDrawer('sessions')}
+                  onOpenSettings={(tab) => {
+                    if (tab) setSettingsTab(tab);
+                    setActiveDrawer('settings');
+                  }}
+                  onAddSystemMessage={(msg) => handleAddPaneSystemMessage(pane.id, msg)}
+                  onOpenDevTools={() => setActiveDrawer('devtools')}
+                  ticketId={pane.ticketId}
+                  hasMoreOlderMessages={(pane.fullSessionMessages?.length || 0) > pane.messages.length}
+                  totalSessionMessages={pane.fullSessionMessages?.length || pane.messages.length}
+                  onLoadOlderMessages={() => handleLoadOlderMessages(pane.id)}
+                />
+              </div>
+            ))}
+          </div>
 
-        <SkillsDrawer
-          isOpen={activeDrawer === 'skills'}
-          onClose={() => setActiveDrawer(null)}
-        />
-        <UsageDialog
-          isOpen={activeDrawer === 'usage'}
-          onClose={() => setActiveDrawer(null)}
-        />
-      </div>
+          {/* Collapsible Drawers (Only in Normal Mode) */}
+          {!isFocusMode && (
+            <>
+              <SessionsDrawer
+                isOpen={activeDrawer === 'sessions'}
+                onClose={() => setActiveDrawer(null)}
+                onResumeSession={handleResumeSession}
+              />
+              <DevToolsDrawer
+                isOpen={activeDrawer === 'devtools'}
+                onClose={() => setActiveDrawer(null)}
+                cwd={cwd}
+              />
+              <SettingsDialog
+                isOpen={activeDrawer === 'settings'}
+                onClose={() => setActiveDrawer(null)}
+                profile={profile}
+                initialTab={settingsTab}
+              />
+              <SkillsDrawer
+                isOpen={activeDrawer === 'skills'}
+                onClose={() => setActiveDrawer(null)}
+              />
+              <UsageDialog
+                isOpen={activeDrawer === 'usage'}
+                onClose={() => setActiveDrawer(null)}
+              />
+            </>
+          )}
+        </div>
       </div>
     </div>
   );

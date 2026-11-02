@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { Rune } from './Rune';
-import { ChatMessage, AgentRunOptions, ModelEntry, WorkspaceFileItem, ToolCall } from '../types';
+import { ChatMessage, AgentRunOptions, ModelEntry, WorkspaceFileItem, ToolCall, ContentBlock } from '../types';
 import { splitThinkingAndResponse } from '../utils/textParser';
 import { ParametersDialog } from './ParametersDialog';
 import { RoleAssignmentModal } from './RoleAssignmentModal';
@@ -68,8 +68,48 @@ function markdownToPhases(md: string): TodoPhaseItem[] {
   }
   return phases.length > 0 ? phases : (currentPhase.tasks.length > 0 ? [currentPhase] : []);
 }
+function getMessageBlocks(msg: ChatMessage, msgIdx: number): ContentBlock[] {
+  if (msg.blocks && msg.blocks.length > 0) {
+    return msg.blocks;
+  }
+  const blocks: ContentBlock[] = [];
+  const baseTime = msg.timestamp ? new Date(msg.timestamp).getTime() : Date.now();
+  if (msg.thinking) {
+    blocks.push({
+      id: 'legacy_th_' + (msg.id || msgIdx),
+      type: 'thinking',
+      content: msg.thinking,
+      timestamp: baseTime,
+    });
+  }
+  if (msg.text) {
+    blocks.push({
+      id: 'legacy_tx_' + (msg.id || msgIdx),
+      type: 'text',
+      content: msg.text,
+      timestamp: baseTime + 1,
+    });
+  }
+  if (msg.toolCalls && msg.toolCalls.length > 0) {
+    msg.toolCalls.forEach((tc, tcIdx) => {
+      blocks.push({
+        id: 'legacy_tl_' + tc.id,
+        type: 'tool',
+        call: tc,
+        timestamp: tc.timestamp || (baseTime + 2 + tcIdx),
+      });
+    });
+  }
+  return blocks;
+}
 
 interface AgentStudioProps {
+  instanceId?: string;
+  title?: string;
+  isFocusMode?: boolean;
+  isActivePane?: boolean;
+  isSplit?: boolean;
+  onFocusPane?: () => void;
   profile?: string;
   messages: ChatMessage[];
   sessionId?: string;
@@ -78,7 +118,7 @@ interface AgentStudioProps {
   onStopAgent: () => void;
   onSendStdin: (input: string) => void;
   cwd: string;
-  onSelectCwd: () => void;
+  onSelectCwd?: () => void;
   onSelectFiles: () => void;
   attachedFiles: string[];
   onRemoveFile: (index: number) => void;
@@ -91,12 +131,22 @@ interface AgentStudioProps {
   onOpenUsage?: () => void;
   onOpenSkills?: () => void;
   onOpenSessions?: () => void;
-  onOpenSettings?: (tab?: 'general' | 'auth' | 'extra') => void;
+  onOpenSettings?: (tab?: 'general' | 'auth' | 'extra' | 'api' | 'plugins') => void;
   onOpenDevTools?: () => void;
   onAddSystemMessage?: (msg: ChatMessage) => void;
+  hasMoreOlderMessages?: boolean;
+  totalSessionMessages?: number;
+  onLoadOlderMessages?: () => void;
+  ticketId?: string;
 }
 
 export const AgentStudio: React.FC<AgentStudioProps> = ({
+  instanceId,
+  title,
+  isFocusMode = false,
+  isActivePane = true,
+  isSplit = false,
+  onFocusPane,
   profile,
   messages,
   sessionId,
@@ -105,10 +155,14 @@ export const AgentStudio: React.FC<AgentStudioProps> = ({
   onStopAgent,
   onSendStdin,
   cwd,
+  onSelectCwd,
   onSelectFiles,
   attachedFiles,
   onRemoveFile,
   onAddFile,
+  hasMoreOlderMessages = false,
+  totalSessionMessages = 0,
+  onLoadOlderMessages,
   availableModels,
   selectedModel,
   onSelectModel,
@@ -120,6 +174,7 @@ export const AgentStudio: React.FC<AgentStudioProps> = ({
   onOpenSettings,
   onOpenDevTools,
   onAddSystemMessage,
+  ticketId,
 }) => {
   const [prompt, setPrompt] = useState('');
   const [showHelpModal, setShowHelpModal] = useState(false);
@@ -149,6 +204,19 @@ export const AgentStudio: React.FC<AgentStudioProps> = ({
       setTodoPhases([]);
     }
   }, [sessionId]);
+  const isComposerHidden = isFocusMode && isSplit && !isActivePane;
+
+  // Auto-focus prompt input when this pane becomes active
+  useEffect(() => {
+    if (isActivePane && !isComposerHidden) {
+      const inputId = `omp-badge-prompt-input-${instanceId || 'main'}`;
+      const el = document.getElementById(inputId) || document.getElementById('omp-badge-prompt-input');
+      if (el) {
+        el.focus();
+      }
+    }
+  }, [isActivePane, isComposerHidden, instanceId]);
+
   const toggleThinkingCollapse = (id: string) => {
     setCollapsedThinking((prev) => ({
       ...prev,
@@ -190,6 +258,23 @@ export const AgentStudio: React.FC<AgentStudioProps> = ({
       setSlowModel(r && r['slow'] ? r['slow'].split(':')[0] : '');
       setPlanModel(r && r['plan'] ? r['plan'].split(':')[0] : '');
       setAdvisorModel(r && r['advisor'] ? r['advisor'].split(':')[0] : '');
+
+      // Sync tools.approvalMode and advisor.enabled from omp config
+      try {
+        const appMode = await AppApi.GetConfigKey('tools.approvalMode');
+        if (appMode) {
+          setApprovalMode(appMode);
+          if (appMode === 'yolo') {
+            setAutoApprove(true);
+          }
+        }
+      } catch {}
+      try {
+        const advEnabled = await AppApi.GetConfigKey('advisor.enabled');
+        if (advEnabled === 'true') {
+          setAdvisor(true);
+        }
+      } catch {}
     } catch (err) {
       console.error('Failed to load roles in studio:', err);
     }
@@ -531,6 +616,14 @@ export const AgentStudio: React.FC<AgentStudioProps> = ({
     stream: true,
     share: true,
     install: true,
+    export: true,
+    collab: true,
+    join: true,
+    leave: true,
+    status: true,
+    models: true,
+    acp: true,
+    seance: true,
   };
   const baseCommands: CommandItem[] = useMemo(() => [
     // 1. Skills & Custom Skills
@@ -2145,12 +2238,59 @@ export const AgentStudio: React.FC<AgentStudioProps> = ({
   };
 
 
+  const [syncingTicket, setSyncingTicket] = useState(false);
+  const [ticketSyncedSuccess, setTicketSyncedSuccess] = useState(false);
+
+  const handleSyncTicketReply = async () => {
+    setSyncingTicket(true);
+    try {
+      const lastAsst = [...messages].reverse().find((m) => m.role === 'assistant' && m.text);
+      const textToSend = lastAsst ? lastAsst.text : '';
+      await AppApi.SyncTicketReply(instanceId || 'main', textToSend);
+      setTicketSyncedSuccess(true);
+      setTimeout(() => setTicketSyncedSuccess(false), 3000);
+    } catch (err) {
+      console.error('SyncTicketReply err:', err);
+    } finally {
+      setSyncingTicket(false);
+    }
+  };
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const lastPasteTimeRef = useRef(0);
 
+  const scrollContainerRef = useRef<HTMLDivElement | null>(null);
+  const isPrependingRef = useRef(false);
+  const prevScrollHeightRef = useRef(0);
+  const isNearBottomRef = useRef(true);
+
+  const handleTriggerLoadOlder = () => {
+    if (!onLoadOlderMessages || !scrollContainerRef.current) return;
+    isPrependingRef.current = true;
+    prevScrollHeightRef.current = scrollContainerRef.current.scrollHeight;
+    onLoadOlderMessages();
+  };
+
+  const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
+    const el = e.currentTarget;
+    isNearBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+    if (el.scrollTop < 70 && hasMoreOlderMessages && !isPrependingRef.current) {
+      handleTriggerLoadOlder();
+    }
+  };
+
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    if (isPrependingRef.current && scrollContainerRef.current) {
+      const newScrollHeight = scrollContainerRef.current.scrollHeight;
+      const heightDelta = newScrollHeight - prevScrollHeightRef.current;
+      scrollContainerRef.current.scrollTop += heightDelta;
+      isPrependingRef.current = false;
+      return;
+    }
+
+    if (isNearBottomRef.current) {
+      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
   }, [messages, isWorking]);
 
   // Handle Clipboard Paste (Print Screen / Screenshot / Files / Paths)
@@ -2312,10 +2452,17 @@ export const AgentStudio: React.FC<AgentStudioProps> = ({
       return;
     }
 
-    // 5. /login, /logout, /setup, /providers
+    // 4b. /api, /remote
+    if (trimmed === '/api' || trimmed === '/remote') {
+      if (onOpenSettings) onOpenSettings('api');
+      setPrompt('');
+      return;
+    }
+    // 5. /login, /logout, /setup, /providers, /auth
     if (
       trimmed.startsWith('/login') ||
       trimmed.startsWith('/logout') ||
+      trimmed.startsWith('/auth') ||
       trimmed === '/setup' ||
       trimmed === '/providers'
     ) {
@@ -3559,21 +3706,54 @@ export const AgentStudio: React.FC<AgentStudioProps> = ({
       className="flex-1 flex flex-col h-full bg-omp-bg overflow-hidden relative font-sans"
     >
       {/* Studio Header Toolbar */}
-      <div className="h-10 border-b border-omp-border bg-omp-surface px-3 flex items-center justify-between select-none shrink-0 font-mono text-xs">
-        <div className="flex items-center space-x-3">
-          <div className="flex items-center space-x-1.5 text-xs text-omp-muted">
+      <div className="h-9 sm:h-10 border-b border-omp-border bg-omp-surface px-2.5 sm:px-3 flex items-center justify-between select-none shrink-0 font-mono text-xs">
+        <div className="flex items-center space-x-2 sm:space-x-3 truncate">
+          <div className="flex items-center space-x-1.5 text-xs text-omp-muted shrink-0">
             <Rune name="tools-sparkles" size={13} className="text-omp-accent" />
-            <span className="font-bold text-white uppercase tracking-wider text-[11px]">OH-MY-PI // STUDIO</span>
+            <span className="font-bold text-white uppercase tracking-wider text-[10px] sm:text-[11px]">
+              {title || 'OH-MY-PI // STUDIO'}
+            </span>
           </div>
 
-          {cwd && (
-            <span className="text-[10px] text-omp-muted hidden sm:inline px-2 py-0.5 rounded-[2px] bg-omp-bg border border-omp-border truncate max-w-sm">
-              DIR: {cwd}
-            </span>
+          {cwd ? (
+            <button
+              type="button"
+              onClick={onSelectCwd}
+              title={`Çalışma dizinini değiştir: ${cwd}`}
+              className={`text-[10px] text-zinc-300 px-2 py-0.5 rounded-[2px] bg-omp-bg border border-omp-border truncate max-w-[150px] sm:max-w-xs transition ${
+                onSelectCwd ? 'hover:border-omp-accent hover:text-white cursor-pointer' : ''
+              }`}
+            >
+              DIR: {cwd.split('\\').pop() || cwd.split('/').pop() || cwd}
+            </button>
+          ) : (
+            onSelectCwd && (
+              <button
+                type="button"
+                onClick={onSelectCwd}
+                className="text-[10px] text-omp-accent px-2 py-0.5 rounded-[2px] bg-omp-bg border border-omp-accent/40 hover:border-omp-accent transition cursor-pointer"
+              >
+                + DİZİN SEÇ
+              </button>
+            )
           )}
         </div>
-
         <div className="flex items-center space-x-2 text-xs">
+          {ticketId && (
+            <div className="flex items-center space-x-1.5 px-2 py-0.5 rounded-[2px] bg-emerald-500/15 border border-emerald-500/40 text-emerald-400 text-[10px] font-mono">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+              <span>TICKET #{ticketId}</span>
+              <button
+                type="button"
+                onClick={handleSyncTicketReply}
+                disabled={syncingTicket}
+                className="ml-1 px-1.5 py-0.2 rounded-[2px] bg-emerald-600 hover:bg-emerald-500 text-white font-bold transition text-[9px]"
+                title="En son asistan cevabını doğrudan bilet sistemine ilet"
+              >
+                {syncingTicket ? 'İletiliyor...' : (ticketSyncedSuccess ? 'İletildi ✓' : 'Bilete İlet')}
+              </button>
+            </div>
+          )}
           {/* Quick Advisor Toggle Pill in Header */}
           <button
             type="button"
@@ -3612,8 +3792,30 @@ export const AgentStudio: React.FC<AgentStudioProps> = ({
       </div>
 
       {/* Main Messages Area */}
-      <div className="flex-1 overflow-y-auto px-4 py-6 space-y-4 flex flex-col items-center">
+      <div
+        ref={scrollContainerRef}
+        onScroll={handleScroll}
+        className="flex-1 overflow-y-auto px-4 py-6 space-y-4 flex flex-col items-center"
+      >
         <div className="w-full max-w-4xl space-y-4 flex-1 flex flex-col">
+          {hasMoreOlderMessages ? (
+            <div className="w-full flex justify-center py-2 shrink-0">
+              <button
+                type="button"
+                onClick={handleTriggerLoadOlder}
+                className="flex items-center space-x-2 px-3.5 py-1.5 rounded-[2px] bg-omp-surface hover:bg-omp-surfaceLight border border-omp-border/80 text-xs font-mono text-zinc-300 hover:text-white transition shadow-sm select-none group"
+              >
+                <Rune name="arrows-arrow-up" size={13} className="text-omp-accent group-hover:-translate-y-0.5 transition-transform" />
+                <span>DAHA ESKİ MESAJLARI YÜKLE ({totalSessionMessages - messages.length} KALAN)</span>
+              </button>
+            </div>
+          ) : totalSessionMessages && totalSessionMessages > 25 ? (
+            <div className="w-full flex items-center justify-center space-x-2 py-2 text-[10px] font-mono text-omp-muted uppercase tracking-wider select-none opacity-60">
+              <span className="w-8 h-px bg-omp-border" />
+              <span>Oturum Başlangıcı (Toplam {totalSessionMessages} mesaj)</span>
+              <span className="w-8 h-px bg-omp-border" />
+            </div>
+          ) : null}
           {messages.length === 0 ? (
             /* Swiss Poster Welcome Screen */
             <div className="h-full flex flex-col items-center justify-center text-center p-8 select-none">
@@ -3765,65 +3967,96 @@ export const AgentStudio: React.FC<AgentStudioProps> = ({
                       <span>/compact — Bağlam sıkıştırma talebi</span>
                     </div>
                   ) : null}
-                  {/* Thinking Section */}
-                  {displayThinking ? (
-                    <div className="mb-3.5 pb-3 border-b border-omp-border/80 select-text">
-                      <div
-                        onClick={() => toggleThinkingCollapse(msg.id || String(idx))}
-                        className="flex items-center justify-between text-zinc-400 font-bold uppercase text-[10px] tracking-wider mb-1.5 select-none font-mono cursor-pointer hover:text-white transition group/th"
-                        title={collapsedThinking[msg.id || String(idx)] ? 'Düşünce adımlarını genişlet' : 'Düşünce adımlarını daralt'}
-                      >
-                        <div className="flex items-center space-x-1.5">
-                          <Rune name="tools-sparkles" size={12} className="text-omp-accent shrink-0" />
-                          <span>REASONING STREAM // THINKING</span>
-                          <span className="text-[9px] px-1.5 py-0.2 bg-omp-bg border border-omp-border text-omp-muted rounded-[2px] font-normal normal-case">
-                            {displayThinking.split('\n').length} satır (~{Math.round(displayThinking.length / 3.8)} token)
-                          </span>
-                        </div>
-                        <div className="flex items-center space-x-1 text-omp-muted group-hover/th:text-white transition">
-                          <span className="text-[9px] uppercase">{collapsedThinking[msg.id || String(idx)] ? 'GENİŞLET' : 'DARALT'}</span>
-                          <Rune name={collapsedThinking[msg.id || String(idx)] ? 'arrows-chevron-down' : 'arrows-chevron-up'} size={11} />
-                        </div>
-                      </div>
-                      {!collapsedThinking[msg.id || String(idx)] && (
-                        <div className="text-zinc-300 font-mono text-[11px] leading-relaxed bg-omp-surface/80 p-3 rounded-[2px] border border-omp-border whitespace-pre-wrap max-h-[380px] overflow-y-auto">
-                          {displayThinking}
-                        </div>
-                      )}
-                    </div>
-                  ) : null}
-
-                  {/* Active working indicator while assistant is generating */}
-                  {isCurrentlyRunning && !rawText && (
-                    <div className="flex items-center space-x-2 text-omp-warning text-xs font-mono py-1 animate-pulse select-none">
-                      <Rune name="schedule-refresh-cw" size={12} className="animate-spin text-omp-warning shrink-0" />
-                      <span>{msg.workingStatus || 'Düşünüyor ve yanıt hazırlıyor...'}</span>
-                    </div>
-                  )}
-
-                  {/* Main Response (With Markdown, Tables, Charts, SVGs, Images) */}
-                  {rawText ? (
+                  {/* User Message Content */}
+                  {msg.role === 'user' && rawText ? (
                     <div className="font-sans text-sm text-zinc-100 leading-relaxed select-text">
                       <MarkdownRenderer content={rawText} msgId={msg.id || String(idx)} />
-                      {isCurrentlyRunning && (
-                        <span className="inline-block w-2 h-4 ml-1.5 bg-omp-accent animate-pulse align-middle" />
-                      )}
                     </div>
                   ) : null}
 
-                  {/* Tool Calls if any */}
-                  {msg.toolCalls && msg.toolCalls.length > 0 && (
-                    <div className="mt-4 space-y-2.5">
-                      {msg.toolCalls.map((tc) => (
-                        <ToolCallCard
-                          key={tc.id}
-                          call={tc}
-                          onApprove={() => onSendStdin('y')}
-                          onReject={() => onSendStdin('n')}
-                        />
-                      ))}
+                  {/* Assistant Message: Chronological Interleaved Timeline of Blocks */}
+                  {msg.role === 'assistant' ? (
+                    <div className="space-y-3">
+                      {(() => {
+                        const blocks = getMessageBlocks(msg, idx);
+                        if (!blocks || blocks.length === 0) return null;
+                        return blocks.map((block) => {
+                          if (block.type === 'thinking') {
+                            const isCollapsed = collapsedThinking[block.id] ?? false;
+                            return (
+                              <div
+                                key={block.id}
+                                className="rounded-[2px] border border-omp-border/80 bg-omp-surface/60 overflow-hidden select-text text-xs shadow-xs"
+                              >
+                                <div
+                                  onClick={() => toggleThinkingCollapse(block.id)}
+                                  className="flex items-center justify-between px-3 py-1.5 bg-omp-surface/90 border-b border-omp-border/40 cursor-pointer hover:bg-omp-surfaceLight transition select-none group/th font-mono"
+                                  title={isCollapsed ? 'Düşünce adımlarını genişlet' : 'Düşünce adımlarını daralt'}
+                                >
+                                  <div className="flex items-center space-x-2 text-zinc-400 group-hover/th:text-white">
+                                    <Rune name="tools-sparkles" size={12} className="text-omp-accent shrink-0" />
+                                    <span className="font-bold uppercase text-[10px] tracking-wider">
+                                      REASONING STREAM // THINKING
+                                    </span>
+                                    {block.timestamp ? (
+                                      <span className="text-[9px] px-1.5 py-0.2 bg-black/40 border border-white/10 text-zinc-400 rounded-[2px]" title="Düşünce Başlangıcı">
+                                        {new Date(block.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                                      </span>
+                                    ) : null}
+                                    <span className="text-[9px] px-1.5 py-0.2 bg-omp-bg border border-omp-border text-omp-muted rounded-[2px] font-normal normal-case">
+                                      {block.content.split('\n').length} satır (~{Math.round(block.content.length / 3.8)} token)
+                                    </span>
+                                  </div>
+                                  <div className="flex items-center space-x-1 text-omp-muted group-hover/th:text-white transition">
+                                    <span className="text-[9px] uppercase">{isCollapsed ? 'GENİŞLET' : 'DARALT'}</span>
+                                    <Rune name={isCollapsed ? 'arrows-chevron-down' : 'arrows-chevron-up'} size={11} />
+                                  </div>
+                                </div>
+                                {!isCollapsed && (
+                                  <div className="text-zinc-300 font-mono text-[11px] leading-relaxed bg-omp-surface/80 p-3 rounded-[2px] border-t border-omp-border/20 whitespace-pre-wrap max-h-[380px] overflow-y-auto">
+                                    {block.content}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          }
+
+                          if (block.type === 'tool') {
+                            return (
+                              <div key={block.id} className="my-1.5">
+                                <ToolCallCard
+                                  call={block.call}
+                                  onApprove={() => onSendStdin('y')}
+                                  onReject={() => onSendStdin('n')}
+                                />
+                              </div>
+                            );
+                          }
+
+                          if (block.type === 'text') {
+                            const cleanContent = block.content.replace(/^\s*Working(?:\.\.\.|…)?\s*\n?/gi, '').trim();
+                            if (!cleanContent) return null;
+                            return (
+                              <div key={block.id} className="font-sans text-sm text-zinc-100 leading-relaxed select-text my-1.5">
+                                <MarkdownRenderer content={cleanContent} msgId={block.id} />
+                              </div>
+                            );
+                          }
+
+                          return null;
+                        });
+                      })()}
+
+                      {/* Active working indicator while assistant is generating */}
+                      {isCurrentlyRunning && (
+                        <div className="flex items-center space-x-2 text-omp-warning text-xs font-mono py-1 animate-pulse select-none mt-2">
+                          <Rune name="schedule-refresh-cw" size={12} className="animate-spin text-omp-warning shrink-0" />
+                          <span>{msg.workingStatus || 'Düşünüyor ve işlem yürütüyor...'}</span>
+                          <span className="inline-block w-2 h-4 ml-1 bg-omp-accent animate-pulse align-middle" />
+                        </div>
+                      )}
                     </div>
-                  )}
+                  ) : null}
                 </div>
               </div>
             );
@@ -3834,8 +4067,28 @@ export const AgentStudio: React.FC<AgentStudioProps> = ({
       </div>
 
       {/* Input Composer & Toolbar */}
-      <div className="border-t border-omp-border bg-omp-surface p-4 shrink-0 flex flex-col items-center">
-        <div className="w-full max-w-4xl space-y-3">
+      {isComposerHidden ? (
+        <div
+          onClick={onFocusPane}
+          className="border-t border-omp-border/60 bg-omp-surface/50 hover:bg-omp-surfaceLight/80 px-3 py-2 shrink-0 flex items-center justify-between text-xs font-mono text-omp-muted hover:text-white cursor-pointer transition select-none group"
+          title="Bu terminale odaklanmak ve mesaj yazmak için tıklayın"
+        >
+          <div className="flex items-center space-x-2">
+            <span className={`w-2 h-2 rounded-full transition-colors ${
+              isWorking ? 'bg-emerald-400 animate-pulse' : 'bg-omp-muted/40 group-hover:bg-omp-accent'
+            }`} />
+            <span className="text-[11px] text-zinc-400 group-hover:text-zinc-200">
+              {isWorking ? 'Ajan çalışıyor... (Odaklanmak için tıklayın)' : '› Odaklanmak ve yazmak için tıklayın'}
+            </span>
+          </div>
+          <div className="flex items-center space-x-2 text-[10px] text-zinc-500 group-hover:text-zinc-400">
+            <span>{selectedModel.split('/').pop() || 'model'}</span>
+            {gitBranch && <span>· {gitBranch}</span>}
+          </div>
+        </div>
+      ) : (
+        <div className="border-t border-omp-border bg-omp-surface p-4 shrink-0 flex flex-col items-center">
+          <div className="w-full max-w-4xl space-y-3">
         <div className="flex items-center justify-between px-1 text-xs select-none font-mono">
           {/* Left: Git Branch (if available) */}
           {/* Left: Git Branch & Mode Indicators (Goal, Loop) */}
@@ -4166,6 +4419,7 @@ export const AgentStudio: React.FC<AgentStudioProps> = ({
             )}
 
             <BadgePromptInput
+              id={`omp-badge-prompt-input-${instanceId || 'main'}`}
               value={prompt}
               onChange={handlePromptChange}
               onKeyDown={handleKeyDown}
@@ -4289,7 +4543,8 @@ export const AgentStudio: React.FC<AgentStudioProps> = ({
           )}
         </form>
         </div>
-      </div>
+        </div>
+      )}
 
       {/* Modal Dialog for Parameters & Roles */}
       <ParametersDialog
@@ -4566,6 +4821,11 @@ const ToolCallCard: React.FC<ToolCallCardProps> = ({ call }) => {
             )}
           </div>
           <div className="flex items-center space-x-2 shrink-0">
+            {call.timestamp ? (
+              <span className="text-[9px] font-mono text-zinc-500 opacity-80" title="Çağrı Zamanı">
+                {new Date(call.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+              </span>
+            ) : null}
             {call.status === 'running' && (
               <span className="text-[10px] text-omp-warning animate-pulse flex items-center space-x-1">
                 <Rune name="schedule-refresh-cw" size={10} className="animate-spin" />
@@ -4627,6 +4887,11 @@ const ToolCallCard: React.FC<ToolCallCardProps> = ({ call }) => {
             {lineCount > 0 && <span className="text-zinc-400 text-[11px]">· {lineCount} lines</span>}
           </div>
           <div className="flex items-center space-x-2 shrink-0">
+            {call.timestamp ? (
+              <span className="text-[9px] font-mono text-zinc-500 opacity-80" title="Çağrı Zamanı">
+                {new Date(call.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+              </span>
+            ) : null}
             {call.status === 'running' && (
               <span className="text-[10px] text-omp-warning animate-pulse flex items-center space-x-1">
                 <Rune name="schedule-refresh-cw" size={10} className="animate-spin" />
@@ -4672,12 +4937,19 @@ const ToolCallCard: React.FC<ToolCallCardProps> = ({ call }) => {
             <span className="text-[#3fb950] font-bold">$</span>
             <span className="text-[#3fb950] font-bold truncate">{cmd}</span>
           </div>
-          {call.status === 'running' && (
-            <span className="text-[10px] text-omp-warning animate-pulse flex items-center space-x-1 shrink-0">
-              <Rune name="schedule-refresh-cw" size={10} className="animate-spin" />
-              <span>RUNNING</span>
-            </span>
-          )}
+          <div className="flex items-center space-x-2 shrink-0">
+            {call.timestamp ? (
+              <span className="text-[9px] font-mono text-zinc-500 opacity-80" title="Çağrı Zamanı">
+                {new Date(call.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+              </span>
+            ) : null}
+            {call.status === 'running' && (
+              <span className="text-[10px] text-omp-warning animate-pulse flex items-center space-x-1 shrink-0">
+                <Rune name="schedule-refresh-cw" size={10} className="animate-spin" />
+                <span>RUNNING</span>
+              </span>
+            )}
+          </div>
         </div>
 
         {out && (
@@ -4711,6 +4983,11 @@ const ToolCallCard: React.FC<ToolCallCardProps> = ({ call }) => {
       </div>
 
       <div className="flex items-center space-x-2 shrink-0">
+        {call.timestamp ? (
+          <span className="text-[9px] font-mono text-zinc-500 opacity-80" title="Çağrı Zamanı">
+            {new Date(call.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+          </span>
+        ) : null}
         {call.status === 'running' ? (
           <span className="text-[10px] text-omp-warning animate-pulse flex items-center space-x-1">
             <Rune name="schedule-refresh-cw" size={10} className="animate-spin" />

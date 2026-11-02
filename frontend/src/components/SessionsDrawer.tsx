@@ -1,6 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Rune } from './Rune';
 import { SessionSummary, SessionDetail } from '../types';
+import { parseSessionTranscript } from '../utils/textParser';
 import * as AppApi from '../../wailsjs/go/main/App';
 
 interface SessionsDrawerProps {
@@ -149,20 +150,25 @@ export const SessionsDrawer: React.FC<SessionsDrawerProps> = ({
           </div>
 
           <div className="flex-1 overflow-y-auto p-4 space-y-3 text-xs">
-            {selectedSession.messages.map((m, idx) => {
-              const role = typeof m.role === 'string' ? m.role : m.type;
-              return (
+            {(() => {
+              const parsed = parseSessionTranscript(selectedSession.messages);
+              if (parsed.length === 0) {
+                return <div className="text-zinc-500 font-mono text-center py-4">Bu oturumda mesaj bulunmuyor.</div>;
+              }
+              return parsed.map((m, idx) => (
                 <div key={idx} className="p-3 rounded-[2px] bg-omp-surface border border-omp-border space-y-1">
                   <div className="flex justify-between text-[10px] text-omp-muted font-mono uppercase">
-                    <span className="font-bold text-omp-accent">{String(role)}</span>
+                    <span className={`font-bold ${m.role === 'user' ? 'text-omp-accent' : 'text-emerald-400'}`}>
+                      {m.role === 'user' ? 'USER' : 'ASSISTANT'}
+                    </span>
                     <span className="tabular-nums">{m.timestamp ? new Date(String(m.timestamp)).toLocaleTimeString() : ''}</span>
                   </div>
-                  <div className="text-zinc-200 whitespace-pre-wrap font-sans text-xs leading-relaxed">
-                    {typeof m.text === 'string' ? m.text : JSON.stringify(m.message || m, null, 2)}
+                  <div className="text-zinc-200 whitespace-pre-wrap font-sans text-xs leading-relaxed max-h-48 overflow-y-auto">
+                    {m.text || (m.toolCalls && m.toolCalls.length > 0 ? `[${m.toolCalls.length} araç çağrısı yürütüldü]` : '') || '(Metin yok)'}
                   </div>
                 </div>
-              );
-            })}
+              ));
+            })()}
           </div>
 
           <div className="p-3 border-t border-omp-border bg-omp-surface flex justify-end space-x-2">

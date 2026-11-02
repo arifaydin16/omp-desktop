@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useRef, useId } from 'react';
-import mermaid from 'mermaid';
+import React, { useState, useEffect, useRef, useId, memo } from 'react';
+import type mermaid from 'mermaid';
 import { Rune } from './Rune';
 
 interface MarkdownRendererProps {
@@ -7,25 +7,34 @@ interface MarkdownRendererProps {
   msgId: string;
 }
 
-// Initialize mermaid once
-try {
-  mermaid.initialize({
-    startOnLoad: false,
-    theme: 'dark',
-    darkMode: true,
-    themeVariables: {
-      darkMode: true,
-      background: '#09090b',
-      primaryColor: '#e11d48',
-      primaryTextColor: '#ffffff',
-      primaryBorderColor: '#3f3f46',
-      lineColor: '#06b6d4',
-      secondaryColor: '#18181b',
-      tertiaryColor: '#27272a',
-    },
-  });
-} catch (e) {
-  console.warn('Mermaid initialization error:', e);
+// Lazy loader for Mermaid (only loaded into memory if a mermaid diagram is rendered)
+let mermaidInitPromise: Promise<typeof mermaid> | null = null;
+function getMermaid() {
+  if (!mermaidInitPromise) {
+    mermaidInitPromise = import('mermaid').then((m) => {
+      try {
+        m.default.initialize({
+          startOnLoad: false,
+          theme: 'dark',
+          darkMode: true,
+          themeVariables: {
+            darkMode: true,
+            background: '#09090b',
+            primaryColor: '#e11d48',
+            primaryTextColor: '#ffffff',
+            primaryBorderColor: '#3f3f46',
+            lineColor: '#06b6d4',
+            secondaryColor: '#18181b',
+            tertiaryColor: '#27272a',
+          },
+        });
+      } catch (e) {
+        console.warn('Mermaid initialization error:', e);
+      }
+      return m.default;
+    });
+  }
+  return mermaidInitPromise;
 }
 
 interface TimelineItem {
@@ -76,6 +85,7 @@ const MermaidBlock: React.FC<{ code: string; blockKey: string }> = ({ code, bloc
     let isMounted = true;
     const renderDiagram = async () => {
       try {
+        const mermaid = await getMermaid();
         const id = `mermaid_${uniqueId}_${Math.random().toString(36).slice(2, 7)}`;
         const { svg } = await mermaid.render(id, code.trim());
         if (isMounted) {
@@ -93,7 +103,6 @@ const MermaidBlock: React.FC<{ code: string; blockKey: string }> = ({ code, bloc
       isMounted = false;
     };
   }, [code, uniqueId]);
-
   return (
     <div className="my-3 rounded-[2px] border border-omp-border bg-[#09090b] overflow-hidden shadow-xl">
       <div className="flex items-center justify-between px-3 py-1.5 bg-omp-surface border-b border-omp-border text-[10px] font-mono select-none">
@@ -449,7 +458,7 @@ const TableBlock: React.FC<{ headers: string[]; rows: string[][]; alignments: ('
 /**
  * Main Markdown Renderer Component
  */
-export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ content, msgId }) => {
+export const MarkdownRenderer: React.FC<MarkdownRendererProps> = memo(({ content, msgId }) => {
   const [modalImage, setModalImage] = useState<{ src: string; alt: string } | null>(null);
 
   // Parse text into structured blocks: code blocks, tables, images, and text
@@ -492,7 +501,7 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ content, msg
       {modalImage && <ImageModal src={modalImage.src} alt={modalImage.alt} onClose={() => setModalImage(null)} />}
     </>
   );
-};
+});
 
 /**
  * Default Code Block with Copy Button

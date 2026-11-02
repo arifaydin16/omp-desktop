@@ -2,12 +2,13 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { Rune } from './Rune';
 import * as AppApi from '../../wailsjs/go/main/App';
 import { AuthenticationPanel } from './AuthenticationPanel';
-
+import { RemoteApiPanel } from './RemoteApiPanel';
+import { PluginsPanel } from './PluginsPanel';
 export interface SettingsDialogProps {
   isOpen: boolean;
   onClose: () => void;
   profile?: string;
-  initialTab?: 'general' | 'auth' | 'extra';
+  initialTab?: 'general' | 'auth' | 'extra' | 'api' | 'plugins';
 }
 
 interface ConfigItem {
@@ -291,8 +292,8 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({
   const [savingKey, setSavingKey] = useState<string | null>(null);
   const [saveStatus, setSaveStatus] = useState<string>('');
   
-  // Tab navigation state: 'general' | 'auth' | 'extra'
-  const [activeTab, setActiveTab] = useState<'general' | 'auth' | 'extra'>('general');
+  // Tab navigation state: 'general' | 'auth' | 'extra' | 'api' | 'plugins'
+  const [activeTab, setActiveTab] = useState<'general' | 'auth' | 'extra' | 'api' | 'plugins'>('general');
   const [showBrokerToken, setShowBrokerToken] = useState(false);
 
 
@@ -543,6 +544,45 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({
                   activeTab === 'extra' ? 'bg-white/20 text-white' : 'bg-omp-bg text-omp-muted'
                 }`}>
                   {extraConfigItems.length}
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setActiveTab('api')}
+                className={`w-full flex items-center justify-between px-3 py-2 rounded-[2px] text-xs transition text-left ${
+                  activeTab === 'api'
+                    ? 'bg-omp-accent text-white font-bold'
+                    : 'text-zinc-300 hover:bg-omp-bg hover:text-white'
+                }`}
+              >
+                <div className="flex items-center space-x-2">
+                  <Rune name="code-server" size={13} className={activeTab === 'api' ? 'text-white' : 'text-omp-accent'} />
+                  <span>04 // REMOTE API</span>
+                </div>
+                <span className={`text-[10px] px-1 py-0.2 rounded-[2px] font-mono ${
+                  activeTab === 'api' ? 'bg-white/20 text-white' : 'bg-omp-bg text-omp-muted'
+                }`}>
+                  /api
+                </span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveTab('plugins')}
+                className={`w-full flex items-center justify-between px-3 py-2 rounded-[2px] text-xs transition text-left ${
+                  activeTab === 'plugins'
+                    ? 'bg-omp-accent text-white font-bold'
+                    : 'text-zinc-300 hover:bg-omp-bg hover:text-white'
+                }`}
+              >
+                <div className="flex items-center space-x-2">
+                  <Rune name="communication-message-square" size={13} className={activeTab === 'plugins' ? 'text-white' : 'text-omp-accent'} />
+                  <span>05 // EKLENTİLER</span>
+                </div>
+                <span className={`text-[10px] px-1 py-0.2 rounded-[2px] font-mono ${
+                  activeTab === 'plugins' ? 'bg-white/20 text-white' : 'bg-omp-bg text-omp-muted'
+                }`}>
+                  PLUGINS
                 </span>
               </button>
             </div>
@@ -939,6 +979,15 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({
                   )}
                 </div>
               </div>
+            )}
+
+            {/* TAB 4: Remote HTTP API & Staging Sandbox */}
+            {activeTab === 'api' && (
+              <RemoteApiPanel />
+            )}
+            {/* TAB 5: Desktop Plugins & Chatbot Responders */}
+            {activeTab === 'plugins' && (
+              <PluginsPanel />
             )}
           </div>
         </div>

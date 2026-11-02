@@ -20,6 +20,10 @@ interface HeaderBarProps {
   onToggleSidebar?: () => void;
   theme?: string;
   onSelectTheme?: (t: string) => void;
+  isFocusMode?: boolean;
+  onToggleFocusMode?: () => void;
+  splitCount?: number;
+  onSelectSplitCount?: (count: number) => void;
 }
 
 const THEMES = [
@@ -65,6 +69,10 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
   onToggleSidebar,
   theme = 'cyber-violet',
   onSelectTheme,
+  isFocusMode = false,
+  onToggleFocusMode,
+  splitCount = 1,
+  onSelectSplitCount,
 }) => {
   const [showUpdateModal, setShowUpdateModal] = useState(false);
   const [useCanary, setUseCanary] = useState(false);
@@ -473,7 +481,42 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
           )}
         </div>
 
-        {/* Swiss Grid Toolbar for Drawers */}
+        {/* Split Grid Selector & Focus Mode Button */}
+        {onSelectSplitCount && (
+          <div className="flex items-center space-x-0.5 bg-omp-bg border border-omp-border rounded-[2px] p-0.5">
+            {[1, 2, 4, 5, 6].map((num) => (
+              <button
+                key={num}
+                type="button"
+                onClick={() => onSelectSplitCount(num)}
+                className={`px-1.5 py-1 text-[10px] font-mono rounded-[2px] transition ${
+                  splitCount === num
+                    ? 'bg-omp-accent text-white font-bold'
+                    : 'text-omp-muted hover:text-white hover:bg-omp-surfaceLight'
+                }`}
+                title={`${num} Ajan / Instance Split`}
+              >
+                {num}P
+              </button>
+            ))}
+          </div>
+        )}
+
+        {onToggleFocusMode && (
+          <button
+            onClick={onToggleFocusMode}
+            title={isFocusMode ? 'Odak Modundan Çık (Tüm panelleri göster)' : 'Odak Moduna Geç (Ctrl+Shift+F)'}
+            className={`px-2.5 py-1.5 rounded-[2px] border transition flex items-center space-x-1.5 font-mono text-xs ${
+              isFocusMode
+                ? 'bg-omp-accent text-white border-omp-accent shadow-sm ring-1 ring-pink-400/50'
+                : 'bg-omp-bg border-omp-border text-omp-muted hover:text-white hover:border-zinc-500'
+            }`}
+          >
+            <Rune name="display-maximize" size={13} />
+            <span className="text-[10px] uppercase font-bold tracking-wider hidden md:inline">ODAK</span>
+          </button>
+        )}
+
         <div className="flex items-center bg-omp-bg border border-omp-border rounded-[2px] divide-x divide-omp-border">
           <button
             onClick={() => onToggleDrawer('sessions')}

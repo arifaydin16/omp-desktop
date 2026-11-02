@@ -1,4 +1,5 @@
 export interface AgentRunOptions {
+  instanceId?: string;
   prompt: string;
   model: string;
   smolModel: string;
@@ -59,6 +60,26 @@ export interface UpdateStatus {
   checking: boolean;
 }
 
+export type ContentBlock =
+  | {
+      id: string;
+      type: 'thinking';
+      content: string;
+      timestamp: number;
+    }
+  | {
+      id: string;
+      type: 'text';
+      content: string;
+      timestamp: number;
+    }
+  | {
+      id: string;
+      type: 'tool';
+      call: ToolCall;
+      timestamp: number;
+    };
+
 export interface ChatMessage {
   id: string;
   role: 'user' | 'assistant' | 'system';
@@ -69,6 +90,7 @@ export interface ChatMessage {
   command?: string;
   exitCode?: number;
   toolCalls?: ToolCall[];
+  blocks?: ContentBlock[];
   workingStatus?: string;
   cost?: number;
   isAdvisor?: boolean;
@@ -89,6 +111,7 @@ export interface ToolCall {
   status: 'pending' | 'running' | 'completed' | 'denied';
   isError?: boolean;
   details?: Record<string, unknown>;
+  timestamp?: number;
 }
 export interface SkillItem {
   name: string;
@@ -177,4 +200,57 @@ export interface LoginProviderDef {
   category: 'Popular' | 'OAuth / Web' | 'API Key' | 'Local';
   dashboardUrl?: string;
   description?: string;
+}
+
+export interface RemoteApiConfig {
+  enabled: boolean;
+  port: number;
+  host: string;
+  apiKey: string;
+  pollingEnabled: boolean;
+  pollingUrl: string;
+  pollingInterval: number;
+  pollingApiKey: string;
+}
+
+export interface EndpointsInfo {
+  promptEndpoint: string;
+  statusEndpoint: string;
+  infoEndpoint: string;
+}
+
+export interface RunInfo {
+  runId: string;
+  prompt: string;
+  cwd: string;
+  model?: string;
+  startedAt: string;
+  completedAt?: string;
+  status: 'running' | 'completed' | 'failed' | string;
+  success: boolean;
+  error?: string;
+}
+
+export interface RemoteApiStatus {
+  enabled: boolean;
+  running: boolean;
+  port: number;
+  host: string;
+  apiKey: string;
+  endpoints: EndpointsInfo;
+  agentStatus: string;
+  isWorking: boolean;
+  status?: string;
+  is_running?: boolean;
+  is_idle?: boolean;
+  task_id?: string;
+  activeRunId?: string;
+  currentRun?: RunInfo;
+  lastRun?: RunInfo;
+  pollingEnabled?: boolean;
+  pollingActive?: boolean;
+  pollingUrl?: string;
+  pollingInterval?: number;
+  lastPollTime?: string;
+  lastPollStatus?: string;
 }

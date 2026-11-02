@@ -1,6 +1,7 @@
 export namespace omp {
 	
 	export class AgentRunOptions {
+	    instanceId: string;
 	    prompt: string;
 	    model: string;
 	    smolModel: string;
@@ -25,6 +26,7 @@ export namespace omp {
 	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.instanceId = source["instanceId"];
 	        this.prompt = source["prompt"];
 	        this.model = source["model"];
 	        this.smolModel = source["smolModel"];
@@ -266,6 +268,200 @@ export namespace omp {
 	        this.fullPath = source["fullPath"];
 	        this.isDir = source["isDir"];
 	    }
+	}
+
+}
+
+export namespace plugins {
+	
+	export class PluginInfo {
+	    id: string;
+	    name: string;
+	    description: string;
+	    version: string;
+	    author: string;
+	    enabled: boolean;
+	    settings: Record<string, any>;
+	
+	    static createFrom(source: any = {}) {
+	        return new PluginInfo(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.name = source["name"];
+	        this.description = source["description"];
+	        this.version = source["version"];
+	        this.author = source["author"];
+	        this.enabled = source["enabled"];
+	        this.settings = source["settings"];
+	    }
+	}
+
+}
+
+export namespace remoteapi {
+	
+	export class EndpointsInfo {
+	    promptEndpoint: string;
+	    statusEndpoint: string;
+	    infoEndpoint: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new EndpointsInfo(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.promptEndpoint = source["promptEndpoint"];
+	        this.statusEndpoint = source["statusEndpoint"];
+	        this.infoEndpoint = source["infoEndpoint"];
+	    }
+	}
+	export class RemoteApiConfig {
+	    enabled: boolean;
+	    port: number;
+	    host: string;
+	    apiKey: string;
+	    pollingEnabled: boolean;
+	    pollingUrl: string;
+	    pollingInterval: number;
+	    pollingApiKey: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new RemoteApiConfig(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.enabled = source["enabled"];
+	        this.port = source["port"];
+	        this.host = source["host"];
+	        this.apiKey = source["apiKey"];
+	        this.pollingEnabled = source["pollingEnabled"];
+	        this.pollingUrl = source["pollingUrl"];
+	        this.pollingInterval = source["pollingInterval"];
+	        this.pollingApiKey = source["pollingApiKey"];
+	    }
+	}
+	export class RunInfo {
+	    runId: string;
+	    prompt: string;
+	    cwd: string;
+	    model?: string;
+	    // Go type: time
+	    startedAt: any;
+	    // Go type: time
+	    completedAt?: any;
+	    status: string;
+	    success: boolean;
+	    error?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new RunInfo(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.runId = source["runId"];
+	        this.prompt = source["prompt"];
+	        this.cwd = source["cwd"];
+	        this.model = source["model"];
+	        this.startedAt = this.convertValues(source["startedAt"], null);
+	        this.completedAt = this.convertValues(source["completedAt"], null);
+	        this.status = source["status"];
+	        this.success = source["success"];
+	        this.error = source["error"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class RemoteApiStatus {
+	    enabled: boolean;
+	    running: boolean;
+	    port: number;
+	    host: string;
+	    apiKey: string;
+	    endpoints: EndpointsInfo;
+	    status: string;
+	    agentStatus: string;
+	    isWorking: boolean;
+	    is_running: boolean;
+	    is_idle: boolean;
+	    task_id?: string;
+	    activeRunId?: string;
+	    currentRun?: RunInfo;
+	    lastRun?: RunInfo;
+	    pollingEnabled: boolean;
+	    pollingActive: boolean;
+	    pollingUrl: string;
+	    pollingInterval: number;
+	    lastPollTime?: string;
+	    lastPollStatus?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new RemoteApiStatus(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.enabled = source["enabled"];
+	        this.running = source["running"];
+	        this.port = source["port"];
+	        this.host = source["host"];
+	        this.apiKey = source["apiKey"];
+	        this.endpoints = this.convertValues(source["endpoints"], EndpointsInfo);
+	        this.status = source["status"];
+	        this.agentStatus = source["agentStatus"];
+	        this.isWorking = source["isWorking"];
+	        this.is_running = source["is_running"];
+	        this.is_idle = source["is_idle"];
+	        this.task_id = source["task_id"];
+	        this.activeRunId = source["activeRunId"];
+	        this.currentRun = this.convertValues(source["currentRun"], RunInfo);
+	        this.lastRun = this.convertValues(source["lastRun"], RunInfo);
+	        this.pollingEnabled = source["pollingEnabled"];
+	        this.pollingActive = source["pollingActive"];
+	        this.pollingUrl = source["pollingUrl"];
+	        this.pollingInterval = source["pollingInterval"];
+	        this.lastPollTime = source["lastPollTime"];
+	        this.lastPollStatus = source["lastPollStatus"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
 	}
 
 }

@@ -1,6 +1,7 @@
 import React, { useRef, useEffect, useCallback } from 'react';
 
 interface BadgePromptInputProps {
+  id?: string;
   value: string;
   onChange: (value: string) => void;
   onKeyDown: (e: React.KeyboardEvent<HTMLDivElement>) => void;
@@ -180,6 +181,7 @@ function setCaretToEnd(el: HTMLElement) {
 }
 
 export const BadgePromptInput: React.FC<BadgePromptInputProps> = ({
+  id = 'omp-badge-prompt-input',
   value,
   onChange,
   onKeyDown,
@@ -268,7 +270,7 @@ export const BadgePromptInput: React.FC<BadgePromptInputProps> = ({
   return (
     <div className="relative w-full">
       <div
-        id="omp-badge-prompt-input"
+        id={id}
         ref={editorRef}
         contentEditable={!disabled}
         suppressContentEditableWarning

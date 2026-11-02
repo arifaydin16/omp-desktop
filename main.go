@@ -3,6 +3,8 @@ package main
 import (
 	"embed"
 
+	"omp-desktop/backend/memory"
+
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
@@ -13,9 +15,11 @@ import (
 var assets embed.FS
 
 func main() {
+	// Configure low-memory profiles for Go runtime and WebView2
+	memory.ConfigureEnvironment()
+
 	// Create an instance of the app structure
 	app := NewApp()
-
 	// Create application with options
 	err := wails.Run(&options.App{
 		Title:     "oh-my-pi Desktop",
@@ -36,6 +40,7 @@ func main() {
 			WebviewIsTransparent: false,
 			WindowIsTranslucent:  false,
 			BackdropType:         windows.Mica,
+			WebviewGpuIsDisabled: true,
 		},
 	})
 

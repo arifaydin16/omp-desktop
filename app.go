@@ -10,16 +10,20 @@ import (
 	"time"
 
 	"omp-desktop/backend/omp"
+	"omp-desktop/backend/plugins"
+	"omp-desktop/backend/remoteapi"
 	"omp-desktop/backend/update"
-
+	"omp-desktop/backend/memory"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 // App struct
 type App struct {
-	ctx           context.Context
-	ompService    *omp.Service
-	updateService *update.Service
+	ctx              context.Context
+	ompService       *omp.Service
+	updateService    *update.Service
+	remoteApiService *remoteapi.Service
+	pluginManager    *plugins.PluginManager
 }
 
 // NewApp creates a new App application struct
@@ -29,10 +33,20 @@ func NewApp() *App {
 	binPath := binInfo["path"]
 
 	updateSvc := update.NewService(binPath)
+	remoteApiSvc := remoteapi.NewService(ompSvc)
+	pluginMgr := plugins.NewPluginManager("")
+	pluginMgr.Register(plugins.NewTicketChatbotPlugin())
+	remoteApiSvc.SetPluginManager(pluginMgr)
+
+	ompSvc.SetTurnCompleteHook(func(instanceId string, output string, err error) {
+		remoteApiSvc.OnInstanceTurnComplete(instanceId, output, err)
+	})
 
 	return &App{
-		ompService:    ompSvc,
-		updateService: updateSvc,
+		ompService:       ompSvc,
+		updateService:    updateSvc,
+		remoteApiService: remoteApiSvc,
+		pluginManager:    pluginMgr,
 	}
 }
 
@@ -42,15 +56,42 @@ func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 	a.ompService.SetContext(ctx)
 	a.updateService.SetContext(ctx)
+	a.remoteApiService.SetContext(ctx)
 
 	// Start background automatic update checker
 	a.updateService.StartAutoChecker()
+	// Start Remote API server if enabled
+	a.remoteApiService.StartIfEnabled()
+	// Start periodic memory optimizer & working set trimmer
+	memory.StartPeriodicOptimization(45 * time.Second)
 }
 
 // shutdown is called at app termination
 func (a *App) shutdown(ctx context.Context) {
 	a.updateService.Stop()
+	_ = a.remoteApiService.Stop()
 }
+
+// GetRemoteApiConfig returns current configuration for remote HTTP API
+func (a *App) GetRemoteApiConfig() remoteapi.RemoteApiConfig {
+	return a.remoteApiService.GetConfig()
+}
+
+// SetRemoteApiConfig updates configuration and starts/stops remote HTTP API
+func (a *App) SetRemoteApiConfig(cfg remoteapi.RemoteApiConfig) error {
+	return a.remoteApiService.SetConfig(cfg)
+}
+
+// GetRemoteApiStatus returns current remote API status and endpoints
+func (a *App) GetRemoteApiStatus() remoteapi.RemoteApiStatus {
+	return a.remoteApiService.GetStatus()
+}
+
+// GenerateNewApiKey creates and saves a new random API key
+func (a *App) GenerateNewApiKey() string {
+	return a.remoteApiService.GenerateNewApiKey()
+}
+
 
 // GetBinaryInfo returns omp binary path and version
 func (a *App) GetBinaryInfo() (map[string]string, error) {
@@ -67,12 +108,45 @@ func (a *App) ClearActiveSession() {
 	a.ompService.ClearActiveSession()
 }
 
+// ClearActiveSessionInstance resets active session for a specific instance
+func (a *App) ClearActiveSessionInstance(instanceId string) {
+	a.ompService.ClearActiveSessionInstance(instanceId)
+}
+
 // SetActiveSessionID sets active session ID in backend
 func (a *App) SetActiveSessionID(id string) {
 	a.ompService.SetActiveSessionID(id)
 }
 
-// GetActiveSessionID returns active session ID in backend
+// SetActiveSessionIDInstance sets active session ID for a specific instance
+func (a *App) SetActiveSessionIDInstance(instanceId, id string) {
+	a.ompService.SetActiveSessionIDInstance(instanceId, id)
+}
+
+// GetDesktopPlugins returns all registered desktop plugins and their configuration
+func (a *App) GetDesktopPlugins() []plugins.PluginInfo {
+	return a.pluginManager.GetPlugins()
+}
+
+// SetDesktopPluginEnabled toggles an extension on or off
+func (a *App) SetDesktopPluginEnabled(pluginID string, enabled bool) error {
+	return a.pluginManager.SetPluginEnabled(pluginID, enabled)
+}
+
+// UpdateDesktopPluginSettings updates configuration for a plugin
+func (a *App) UpdateDesktopPluginSettings(pluginID string, settings map[string]interface{}) error {
+	return a.pluginManager.UpdatePluginSettings(pluginID, settings)
+}
+
+// SyncTicketReply transmits the specified output or latest assistant response to the bound ticket
+func (a *App) SyncTicketReply(instanceId string, outputText string) error {
+	return a.remoteApiService.SyncTicketReply(instanceId, outputText)
+}
+
+// TrimMemory forces immediate GC and purges working sets for app and webview2
+func (a *App) TrimMemory() {
+	memory.TrimMemory()
+}
 func (a *App) GetActiveSessionID() string {
 	return a.ompService.GetActiveSessionID()
 }
@@ -82,9 +156,19 @@ func (a *App) StopAgent() error {
 	return a.ompService.StopAgent()
 }
 
+// StopAgentInstance terminates a specific agent instance process
+func (a *App) StopAgentInstance(instanceId string) error {
+	return a.ompService.StopAgentInstance(instanceId)
+}
+
 // SendStdin writes input to agent stdin
 func (a *App) SendStdin(input string) error {
 	return a.ompService.SendStdin(input)
+}
+
+// SendStdinInstance writes input to a specific agent instance stdin
+func (a *App) SendStdinInstance(instanceId string, input string) error {
+	return a.ompService.SendStdinInstance(instanceId, input)
 }
 
 // GetModels returns available models

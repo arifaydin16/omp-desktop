@@ -18,6 +18,10 @@ export function ClearActiveSession() {
   return window['go']['main']['App']['ClearActiveSession']();
 }
 
+export function ClearActiveSessionInstance(arg1) {
+  return window['go']['main']['App']['ClearActiveSessionInstance'](arg1);
+}
+
 export function CountTokens(arg1) {
   return window['go']['main']['App']['CountTokens'](arg1);
 }
@@ -36,6 +40,10 @@ export function ExecuteAgent(arg1) {
 
 export function ExportSessionHTML(arg1) {
   return window['go']['main']['App']['ExportSessionHTML'](arg1);
+}
+
+export function GenerateNewApiKey() {
+  return window['go']['main']['App']['GenerateNewApiKey']();
 }
 
 export function GetActiveSessionID() {
@@ -66,6 +74,10 @@ export function GetCurrentProfile() {
   return window['go']['main']['App']['GetCurrentProfile']();
 }
 
+export function GetDesktopPlugins() {
+  return window['go']['main']['App']['GetDesktopPlugins']();
+}
+
 export function GetGitBranch(arg1) {
   return window['go']['main']['App']['GetGitBranch'](arg1);
 }
@@ -88,6 +100,14 @@ export function GetProcesses() {
 
 export function GetProfiles() {
   return window['go']['main']['App']['GetProfiles']();
+}
+
+export function GetRemoteApiConfig() {
+  return window['go']['main']['App']['GetRemoteApiConfig']();
+}
+
+export function GetRemoteApiStatus() {
+  return window['go']['main']['App']['GetRemoteApiStatus']();
 }
 
 export function GetSessionDetail(arg1) {
@@ -206,8 +226,16 @@ export function SendStdin(arg1) {
   return window['go']['main']['App']['SendStdin'](arg1);
 }
 
+export function SendStdinInstance(arg1, arg2) {
+  return window['go']['main']['App']['SendStdinInstance'](arg1, arg2);
+}
+
 export function SetActiveSessionID(arg1) {
   return window['go']['main']['App']['SetActiveSessionID'](arg1);
+}
+
+export function SetActiveSessionIDInstance(arg1, arg2) {
+  return window['go']['main']['App']['SetActiveSessionIDInstance'](arg1, arg2);
 }
 
 export function SetAdvisorEnabled(arg1) {
@@ -218,6 +246,10 @@ export function SetConfigKey(arg1, arg2) {
   return window['go']['main']['App']['SetConfigKey'](arg1, arg2);
 }
 
+export function SetDesktopPluginEnabled(arg1, arg2) {
+  return window['go']['main']['App']['SetDesktopPluginEnabled'](arg1, arg2);
+}
+
 export function SetModelRole(arg1, arg2) {
   return window['go']['main']['App']['SetModelRole'](arg1, arg2);
 }
@@ -226,12 +258,32 @@ export function SetProfile(arg1) {
   return window['go']['main']['App']['SetProfile'](arg1);
 }
 
+export function SetRemoteApiConfig(arg1) {
+  return window['go']['main']['App']['SetRemoteApiConfig'](arg1);
+}
+
 export function StartLogin(arg1, arg2) {
   return window['go']['main']['App']['StartLogin'](arg1, arg2);
 }
 
 export function StopAgent() {
   return window['go']['main']['App']['StopAgent']();
+}
+
+export function StopAgentInstance(arg1) {
+  return window['go']['main']['App']['StopAgentInstance'](arg1);
+}
+
+export function SyncTicketReply(arg1, arg2) {
+  return window['go']['main']['App']['SyncTicketReply'](arg1, arg2);
+}
+
+export function TrimMemory() {
+  return window['go']['main']['App']['TrimMemory']();
+}
+
+export function UpdateDesktopPluginSettings(arg1, arg2) {
+  return window['go']['main']['App']['UpdateDesktopPluginSettings'](arg1, arg2);
 }
 
 export function WriteWorkspaceFile(arg1, arg2) {

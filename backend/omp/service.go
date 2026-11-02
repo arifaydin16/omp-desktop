@@ -16,6 +16,7 @@ import (
 	"syscall"
 	"time"
 
+	"omp-desktop/backend/memory"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
@@ -28,8 +29,48 @@ func prepareCmd(cmd *exec.Cmd) *exec.Cmd {
 	return cmd
 }
 
+// resolveValidWorkingDir ensures that cmd.Dir is ALWAYS an existing, valid directory on local disk.
+// Windows CreateProcess will fail with ERROR_DIRECTORY ("Dizin adı geçersiz") if the working directory
+// does not exist, has invalid characters, or is a UNC / RDP redirected path (\\tsclient\... or \\...).
+func resolveValidWorkingDir(candidate string) string {
+	candidate = strings.TrimSpace(candidate)
+	candidate = strings.Trim(candidate, `"'`)
+
+	// 1. If candidate is a valid local directory (and NOT a UNC/network path)
+	if candidate != "" && !strings.HasPrefix(candidate, `\\`) {
+		if fi, err := os.Stat(candidate); err == nil && fi.IsDir() {
+			return candidate
+		}
+	}
+
+	// 2. Fallback to User Home directory (e.g. C:\Users\arif)
+	if home, err := os.UserHomeDir(); err == nil && home != "" && !strings.HasPrefix(home, `\\`) {
+		if fi, err := os.Stat(home); err == nil && fi.IsDir() {
+			return home
+		}
+	}
+
+	// 3. Fallback to current process working directory if valid and not UNC
+	if cur, err := os.Getwd(); err == nil && cur != "" && !strings.HasPrefix(cur, `\\`) {
+		if fi, err := os.Stat(cur); err == nil && fi.IsDir() {
+			return cur
+		}
+	}
+
+	// 4. Fallback to SystemDrive root (e.g. C:\)
+	if sysDrive := os.Getenv("SystemDrive"); sysDrive != "" {
+		root := sysDrive + `\`
+		if fi, err := os.Stat(root); err == nil && fi.IsDir() {
+			return root
+		}
+	}
+
+	return `C:\`
+}
+
 // AgentRunOptions represents options to run an omp agent session
 type AgentRunOptions struct {
+	InstanceID    string   `json:"instanceId"`
 	Prompt        string   `json:"prompt"`
 	Model         string   `json:"model"`
 	SmolModel     string   `json:"smolModel"`
@@ -134,28 +175,44 @@ type CliCommandResult struct {
 type Service struct {
 	ctx            context.Context
 	ompBin         string
-	activeCmd      *exec.Cmd
-	cmdStdin       io.WriteCloser
-	isWorking      bool
-	mutex          sync.Mutex
-	sessionDir     string
-	activeSessionID string
-	currentProfile string
-	loginCmd       *exec.Cmd
-	loginStdin     io.WriteCloser
-	loginMutex     sync.Mutex
+	activeCmd       *exec.Cmd
+	cmdStdin        io.WriteCloser
+	isWorking       bool
+	activeProcesses map[string]*exec.Cmd
+	activeStdins    map[string]io.WriteCloser
+	mutex           sync.Mutex
+	sessionDir       string
+	activeSessionID  string
+	activeSessionIDs map[string]string
+	currentProfile   string
+	loginCmd        *exec.Cmd
+	loginStdin      io.WriteCloser
+	loginMutex      sync.Mutex
+	sessionCache      map[string]sessionCacheEntry
+	sessionCacheMutex sync.RWMutex
+	turnCompleteHook  func(instanceId string, output string, err error)
 }
 
+type sessionCacheEntry struct {
+	modTime time.Time
+	size    int64
+	summary SessionSummary
+}
 func NewService() *Service {
 	bin := findOmpBinary()
 	homeDir, _ := os.UserHomeDir()
 	sessDir := filepath.Join(homeDir, ".omp", "agent", "sessions")
 
 	return &Service{
-		ompBin:     bin,
-		sessionDir: sessDir,
+		ompBin:           bin,
+		sessionDir:       sessDir,
+		activeProcesses:  make(map[string]*exec.Cmd),
+		activeStdins:     make(map[string]io.WriteCloser),
+		activeSessionIDs: make(map[string]string),
+		sessionCache:     make(map[string]sessionCacheEntry),
 	}
 }
+
 // SetProfile sets the active profile name and updates the session directory
 func (s *Service) SetProfile(profile string) {
 	s.mutex.Lock()
@@ -186,25 +243,84 @@ func (s *Service) GetCurrentProfile() string {
 
 // SetActiveSessionID sets or resets the current active session ID
 func (s *Service) SetActiveSessionID(id string) {
-	s.mutex.Lock()
-	defer s.mutex.Unlock()
-	s.activeSessionID = strings.TrimSpace(id)
+	s.SetActiveSessionIDInstance("main", id)
 }
 
-// GetActiveSessionID gets the current active session ID
-func (s *Service) GetActiveSessionID() string {
+// SetActiveSessionIDInstance sets session ID for a specific instance
+func (s *Service) SetActiveSessionIDInstance(instanceId, id string) {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
-	return s.activeSessionID
+	cleanID := strings.TrimSpace(id)
+	instID := strings.TrimSpace(instanceId)
+	if instID == "" {
+		instID = "main"
+	}
+	if s.activeSessionIDs == nil {
+		s.activeSessionIDs = make(map[string]string)
+	}
+	s.activeSessionIDs[instID] = cleanID
+	if instID == "main" {
+		s.activeSessionID = cleanID
+	}
+}
+
+// GetActiveSessionID gets the current active session ID for main instance
+func (s *Service) GetActiveSessionID() string {
+	return s.GetActiveSessionIDInstance("main")
+}
+
+// GetActiveSessionIDInstance gets the session ID for a specific instance
+func (s *Service) GetActiveSessionIDInstance(instanceId string) string {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+	instID := strings.TrimSpace(instanceId)
+	if instID == "" {
+		instID = "main"
+	}
+	if s.activeSessionIDs != nil {
+		if sid, ok := s.activeSessionIDs[instID]; ok && sid != "" {
+			return sid
+		}
+	}
+	if instID == "main" {
+		return s.activeSessionID
+	}
+	return ""
+}
+
+// FindAvailableInstanceID returns the first idle instance ID ("main", "inst-2", etc.)
+func (s *Service) FindAvailableInstanceID() string {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+	candidates := []string{"main", "inst-2", "inst-3", "inst-4", "inst-5", "inst-6"}
+	for _, id := range candidates {
+		if _, running := s.activeProcesses[id]; !running {
+			return id
+		}
+	}
+	return "main"
 }
 
 // ClearActiveSession clears the current active session ID
 func (s *Service) ClearActiveSession() {
-	s.mutex.Lock()
-	defer s.mutex.Unlock()
-	s.activeSessionID = ""
+	s.ClearActiveSessionInstance("main")
 }
 
+// ClearActiveSessionInstance clears the session ID for a specific instance
+func (s *Service) ClearActiveSessionInstance(instanceId string) {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+	instID := strings.TrimSpace(instanceId)
+	if instID == "" {
+		instID = "main"
+	}
+	if s.activeSessionIDs != nil {
+		delete(s.activeSessionIDs, instID)
+	}
+	if instID == "main" {
+		s.activeSessionID = ""
+	}
+}
 // GetProfiles returns all available profile names from ~/.omp/profiles
 func (s *Service) GetProfiles() []string {
 	profiles := []string{"default"}
@@ -243,12 +359,19 @@ func (s *Service) SetContext(ctx context.Context) {
 	s.ctx = ctx
 }
 
+// SetTurnCompleteHook sets a listener invoked whenever an agent turn finishes on an instance
+func (s *Service) SetTurnCompleteHook(hook func(instanceId string, output string, err error)) {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+	s.turnCompleteHook = hook
+}
+
 func findOmpBinary() string {
 	// 1. Check local appdata omp.exe
 	localAppData := os.Getenv("LOCALAPPDATA")
 	if localAppData != "" {
 		p := filepath.Join(localAppData, "omp", "omp.exe")
-		if _, err := os.Stat(p); err == nil {
+		if fi, err := os.Stat(p); err == nil && !fi.IsDir() {
 			return p
 		}
 	}
@@ -262,6 +385,7 @@ func findOmpBinary() string {
 // GetBinaryInfo returns omp path and version
 func (s *Service) GetBinaryInfo() (map[string]string, error) {
 	cmd := prepareCmd(exec.Command(s.ompBin, "--help"))
+	cmd.Dir = resolveValidWorkingDir("")
 	out, err := cmd.CombinedOutput()
 	version := "unknown"
 	if err == nil {
@@ -270,33 +394,63 @@ func (s *Service) GetBinaryInfo() (map[string]string, error) {
 			version = strings.TrimSpace(lines[0])
 		}
 	}
+	currentWd := resolveValidWorkingDir("")
 	return map[string]string{
 		"path":    s.ompBin,
 		"version": version,
+		"cwd":     currentWd,
 	}, nil
 }
 
 // ExecuteAgent launches or feeds into an omp run with real-time streaming
 func (s *Service) ExecuteAgent(opts AgentRunOptions) error {
+	_, err := s.ExecuteAgentWithOutput(opts)
+	return err
+}
+
+// ExecuteAgentWithOutput runs agent, streams events, and returns the accumulated response text
+func (s *Service) ExecuteAgentWithOutput(opts AgentRunOptions) (string, error) {
+	instID := strings.TrimSpace(opts.InstanceID)
+	if instID == "" {
+		instID = "main"
+	}
+
 	s.mutex.Lock()
-	if s.isWorking {
+	if _, running := s.activeProcesses[instID]; running {
 		s.mutex.Unlock()
-		return fmt.Errorf("an agent turn is already running")
+		return "", fmt.Errorf("instance %s is already running", instID)
+	}
+	if s.activeProcesses == nil {
+		s.activeProcesses = make(map[string]*exec.Cmd)
+	}
+	if s.activeStdins == nil {
+		s.activeStdins = make(map[string]io.WriteCloser)
 	}
 	s.isWorking = true
 	s.mutex.Unlock()
 
 	defer func() {
 		s.mutex.Lock()
-		s.isWorking = false
-		s.activeCmd = nil
-		s.cmdStdin = nil
+		delete(s.activeProcesses, instID)
+		delete(s.activeStdins, instID)
+		if instID == "main" {
+			s.activeCmd = nil
+			s.cmdStdin = nil
+		}
+		s.isWorking = len(s.activeProcesses) > 0
 		s.mutex.Unlock()
 		if s.ctx != nil {
-			runtime.EventsEmit(s.ctx, "agent:status", map[string]interface{}{"status": "idle"})
+			runtime.EventsEmit(s.ctx, "agent:status", map[string]interface{}{
+				"status":     "idle",
+				"instanceId": instID,
+			})
 		}
+		// Trigger memory trimming when an instance finishes its turn
+		go memory.TrimMemory()
 	}()
 
+	var assistantOutput strings.Builder
+	var outputMutex sync.Mutex
 	var args []string
 	args = append(args, "-p", "--mode=json", "--print-thoughts")
 	if opts.Model != "" {
@@ -314,7 +468,7 @@ func (s *Service) ExecuteAgent(opts AgentRunOptions) error {
 	if opts.ThinkingLevel != "" {
 		args = append(args, "--thinking="+opts.ThinkingLevel)
 	}
-	if opts.ApprovalMode != "" {
+	if opts.ApprovalMode != "" && opts.ApprovalMode != "default" {
 		args = append(args, "--approval-mode="+opts.ApprovalMode)
 	}
 	if opts.AutoApprove {
@@ -344,13 +498,17 @@ func (s *Service) ExecuteAgent(opts AgentRunOptions) error {
 	sessID := opts.SessionID
 	if sessID == "" {
 		s.mutex.Lock()
-		sessID = s.activeSessionID
+		if s.activeSessionIDs != nil {
+			sessID = s.activeSessionIDs[instID]
+		}
+		if sessID == "" && instID == "main" {
+			sessID = s.activeSessionID
+		}
 		s.mutex.Unlock()
 	}
 	if sessID != "" {
 		args = append(args, "--resume="+sessID)
 	}
-
 	// File attachments - resolve relative to opts.Cwd or absolute path
 	effectiveCwd := opts.Cwd
 	if effectiveCwd == "" {
@@ -388,42 +546,45 @@ func (s *Service) ExecuteAgent(opts AgentRunOptions) error {
 	}
 
 	cmd := prepareCmd(exec.Command(s.ompBin, args...))
-	if opts.Cwd != "" {
-		cmd.Dir = opts.Cwd
-	}
+	cmd.Dir = resolveValidWorkingDir(opts.Cwd)
 
 	// Provide empty stdin with immediate EOF so omp does not hang waiting for piped stdin
 	cmd.Stdin = strings.NewReader("")
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		return err
+		return "", err
 	}
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
-		return err
+		return "", err
 	}
 
 	s.mutex.Lock()
-	s.activeCmd = cmd
+	s.activeProcesses[instID] = cmd
+	if instID == "main" {
+		s.activeCmd = cmd
+	}
 	s.mutex.Unlock()
 
 	fullCommand := fmt.Sprintf("omp %s", strings.Join(args, " "))
 
 	if s.ctx != nil {
 		runtime.EventsEmit(s.ctx, "agent:status", map[string]interface{}{
-			"status":  "running",
-			"args":    args,
-			"command": fullCommand,
+			"status":     "running",
+			"args":       args,
+			"command":    fullCommand,
+			"instanceId": instID,
 		})
 		runtime.EventsEmit(s.ctx, "agent:command", map[string]interface{}{
-			"command": fullCommand,
-			"cwd":     cmd.Dir,
+			"command":    fullCommand,
+			"cwd":        cmd.Dir,
+			"instanceId": instID,
 		})
 	}
 
 	if err := cmd.Start(); err != nil {
-		return err
+		return "", err
 	}
 
 	// Read stdout line by line
@@ -446,11 +607,18 @@ func (s *Service) ExecuteAgent(opts AgentRunOptions) error {
 					if fType == "session" {
 						if newSessID, ok := frame["id"].(string); ok && newSessID != "" {
 							s.mutex.Lock()
-							s.activeSessionID = newSessID
+							if s.activeSessionIDs == nil {
+								s.activeSessionIDs = make(map[string]string)
+							}
+							s.activeSessionIDs[instID] = newSessID
+							if instID == "main" {
+								s.activeSessionID = newSessID
+							}
 							s.mutex.Unlock()
 							if s.ctx != nil {
 								runtime.EventsEmit(s.ctx, "agent:session", map[string]interface{}{
-									"sessionId": newSessID,
+									"sessionId":  newSessID,
+									"instanceId": instID,
 								})
 							}
 						}
@@ -463,17 +631,24 @@ func (s *Service) ExecuteAgent(opts AgentRunOptions) error {
 							eType, _ := asstEvent["type"].(string)
 							switch eType {
 							case "text_delta":
-								if delta, ok := asstEvent["delta"].(string); ok && delta != "" && s.ctx != nil {
-									runtime.EventsEmit(s.ctx, "agent:stream", map[string]interface{}{
-										"type":    "text",
-										"content": delta,
-									})
+								if delta, ok := asstEvent["delta"].(string); ok && delta != "" {
+									outputMutex.Lock()
+									assistantOutput.WriteString(delta)
+									outputMutex.Unlock()
+									if s.ctx != nil {
+										runtime.EventsEmit(s.ctx, "agent:stream", map[string]interface{}{
+											"type":       "text",
+											"content":    delta,
+											"instanceId": instID,
+										})
+									}
 								}
 							case "thinking_delta":
 								if delta, ok := asstEvent["delta"].(string); ok && delta != "" && s.ctx != nil {
 									runtime.EventsEmit(s.ctx, "agent:stream", map[string]interface{}{
-										"type":    "thinking",
-										"content": delta,
+										"type":       "thinking",
+										"content":    delta,
+										"instanceId": instID,
 									})
 								}
 							}
@@ -483,18 +658,21 @@ func (s *Service) ExecuteAgent(opts AgentRunOptions) error {
 					// 3. Tool execution lifecycle events
 					if fType == "tool_execution_start" {
 						if s.ctx != nil {
+							frame["instanceId"] = instID
 							runtime.EventsEmit(s.ctx, "agent:tool_start", frame)
 						}
 						continue
 					}
 					if fType == "tool_execution_update" {
 						if s.ctx != nil {
+							frame["instanceId"] = instID
 							runtime.EventsEmit(s.ctx, "agent:tool_update", frame)
 						}
 						continue
 					}
 					if fType == "tool_execution_end" {
 						if s.ctx != nil {
+							frame["instanceId"] = instID
 							runtime.EventsEmit(s.ctx, "agent:tool_end", frame)
 						}
 						continue
@@ -509,8 +687,9 @@ func (s *Service) ExecuteAgent(opts AgentRunOptions) error {
 			if trimmed == "Working..." || trimmed == "Working…" {
 				if s.ctx != nil {
 					runtime.EventsEmit(s.ctx, "agent:stream", map[string]interface{}{
-						"type":    "stderr",
-						"content": trimmed,
+						"type":       "stderr",
+						"content":    trimmed,
+						"instanceId": instID,
 					})
 				}
 				continue
@@ -518,8 +697,9 @@ func (s *Service) ExecuteAgent(opts AgentRunOptions) error {
 
 			if s.ctx != nil {
 				runtime.EventsEmit(s.ctx, "agent:stream", map[string]interface{}{
-					"type":    "stdout",
-					"content": line,
+					"type":       "stdout",
+					"content":    line,
+					"instanceId": instID,
 				})
 			}
 		}
@@ -532,8 +712,9 @@ func (s *Service) ExecuteAgent(opts AgentRunOptions) error {
 			line := scanner.Text()
 			if s.ctx != nil {
 				runtime.EventsEmit(s.ctx, "agent:stream", map[string]interface{}{
-					"type":    "stderr",
-					"content": line,
+					"type":       "stderr",
+					"content":    line,
+					"instanceId": instID,
 				})
 			}
 		}
@@ -546,37 +727,81 @@ func (s *Service) ExecuteAgent(opts AgentRunOptions) error {
 	}
 
 	s.mutex.Lock()
-	currentSessID := s.activeSessionID
+	currentSessID := ""
+	if s.activeSessionIDs != nil {
+		currentSessID = s.activeSessionIDs[instID]
+	}
+	if currentSessID == "" && instID == "main" {
+		currentSessID = s.activeSessionID
+	}
 	s.mutex.Unlock()
-
 	if s.ctx != nil {
 		runtime.EventsEmit(s.ctx, "agent:done", map[string]interface{}{
-			"exitCode":  exitCode,
-			"success":   err == nil,
-			"sessionId": currentSessID,
+			"exitCode":   exitCode,
+			"success":    err == nil,
+			"sessionId":  currentSessID,
+			"instanceId": instID,
 		})
 	}
 
-	return err
+	outputMutex.Lock()
+	finalOut := strings.TrimSpace(assistantOutput.String())
+	outputMutex.Unlock()
+
+	s.mutex.Lock()
+	hook := s.turnCompleteHook
+	s.mutex.Unlock()
+	if hook != nil {
+		hook(instID, finalOut, err)
+	}
+
+	return finalOut, err
 }
 
 // StopAgent terminates current running agent process
 func (s *Service) StopAgent() error {
+	return s.StopAgentInstance("main")
+}
+
+// StopAgentInstance terminates a running agent process by instance ID
+func (s *Service) StopAgentInstance(instanceId string) error {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
-	if s.activeCmd != nil && s.activeCmd.Process != nil {
+	id := strings.TrimSpace(instanceId)
+	if id == "" {
+		id = "main"
+	}
+
+	if cmd, exists := s.activeProcesses[id]; exists && cmd != nil && cmd.Process != nil {
+		return cmd.Process.Kill()
+	}
+	if s.activeCmd != nil && s.activeCmd.Process != nil && (id == "main" || len(s.activeProcesses) == 0) {
 		return s.activeCmd.Process.Kill()
 	}
 	return nil
 }
 
-// SendStdin writes to the agent's stdin (for approvals, interactive prompts)
+// SendStdin writes to the default agent instance stdin
 func (s *Service) SendStdin(input string) error {
+	return s.SendStdinInstance("main", input)
+}
+
+// SendStdinInstance writes to a specific agent instance stdin
+func (s *Service) SendStdinInstance(instanceId string, input string) error {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
-	if s.cmdStdin != nil {
+	id := strings.TrimSpace(instanceId)
+	if id == "" {
+		id = "main"
+	}
+
+	if stdin, exists := s.activeStdins[id]; exists && stdin != nil {
+		_, err := stdin.Write([]byte(input + "\n"))
+		return err
+	}
+	if s.cmdStdin != nil && (id == "main" || len(s.activeStdins) == 0) {
 		_, err := s.cmdStdin.Write([]byte(input + "\n"))
 		return err
 	}
@@ -673,6 +898,7 @@ func (s *Service) SetConfigKey(key string, value string) error {
 // GetProcesses returns background daemons from omp ps
 func (s *Service) GetProcesses() (string, error) {
 	cmd := prepareCmd(exec.Command(s.ompBin, "ps", "--all"))
+	cmd.Dir = resolveValidWorkingDir("")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return string(out), err
@@ -683,9 +909,7 @@ func (s *Service) GetProcesses() (string, error) {
 // RunGitStatus returns git status / diff via omp
 func (s *Service) RunGitStatus(cwd string) (string, error) {
 	cmd := prepareCmd(exec.Command("git", "status", "-s"))
-	if cwd != "" {
-		cmd.Dir = cwd
-	}
+	cmd.Dir = resolveValidWorkingDir(cwd)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return string(out), err
@@ -695,15 +919,11 @@ func (s *Service) RunGitStatus(cwd string) (string, error) {
 // GetGitBranch returns current git branch in cwd if it's a git repository
 func (s *Service) GetGitBranch(cwd string) (string, error) {
 	cmd := prepareCmd(exec.Command("git", "branch", "--show-current"))
-	if cwd != "" {
-		cmd.Dir = cwd
-	}
+	cmd.Dir = resolveValidWorkingDir(cwd)
 	out, err := cmd.Output()
 	if err != nil {
 		cmd2 := prepareCmd(exec.Command("git", "rev-parse", "--abbrev-ref", "HEAD"))
-		if cwd != "" {
-			cmd2.Dir = cwd
-		}
+		cmd2.Dir = resolveValidWorkingDir(cwd)
 		out2, err2 := cmd2.Output()
 		if err2 != nil {
 			return "", nil
@@ -713,9 +933,7 @@ func (s *Service) GetGitBranch(cwd string) (string, error) {
 	branch := strings.TrimSpace(string(out))
 	if branch == "" {
 		cmd2 := prepareCmd(exec.Command("git", "rev-parse", "--short", "HEAD"))
-		if cwd != "" {
-			cmd2.Dir = cwd
-		}
+		cmd2.Dir = resolveValidWorkingDir(cwd)
 		out2, _ := cmd2.Output()
 		branch = strings.TrimSpace(string(out2))
 	}
@@ -726,9 +944,7 @@ func (s *Service) GetGitBranch(cwd string) (string, error) {
 // RunGitDiff returns git diff
 func (s *Service) RunGitDiff(cwd string) (string, error) {
 	cmd := prepareCmd(exec.Command("git", "diff"))
-	if cwd != "" {
-		cmd.Dir = cwd
-	}
+	cmd.Dir = resolveValidWorkingDir(cwd)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return string(out), err
@@ -739,9 +955,7 @@ func (s *Service) RunGitDiff(cwd string) (string, error) {
 // RunCommit triggers omp commit to generate commit message
 func (s *Service) RunCommit(cwd string) (string, error) {
 	cmd := prepareCmd(exec.Command(s.ompBin, "commit"))
-	if cwd != "" {
-		cmd.Dir = cwd
-	}
+	cmd.Dir = resolveValidWorkingDir(cwd)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return string(out), err
@@ -752,9 +966,7 @@ func (s *Service) RunCommit(cwd string) (string, error) {
 // RunCleanse triggers project diagnostics repair
 func (s *Service) RunCleanse(cwd string) (string, error) {
 	cmd := prepareCmd(exec.Command(s.ompBin, "cleanse"))
-	if cwd != "" {
-		cmd.Dir = cwd
-	}
+	cmd.Dir = resolveValidWorkingDir(cwd)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return string(out), err
@@ -765,6 +977,7 @@ func (s *Service) RunCleanse(cwd string) (string, error) {
 // GetPlugins returns installed plugins
 func (s *Service) GetPlugins() (string, error) {
 	cmd := prepareCmd(exec.Command(s.ompBin, "plugin", "ls"))
+	cmd.Dir = resolveValidWorkingDir("")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return string(out), err
@@ -1050,30 +1263,117 @@ func (s *Service) GetSessions(limit int) ([]SessionSummary, error) {
 		return nil, err
 	}
 
+	type fileCandidate struct {
+		path    string
+		project string
+		modTime time.Time
+		size    int64
+	}
+
+	var candidates []fileCandidate
+
 	for _, pDir := range projectDirs {
 		if !pDir.IsDir() {
 			continue
 		}
 		projPath := filepath.Join(s.sessionDir, pDir.Name())
-		files, err := os.ReadDir(projPath)
+		entries, err := os.ReadDir(projPath)
 		if err != nil {
 			continue
 		}
 
-		for _, f := range files {
-			if !strings.HasSuffix(f.Name(), ".jsonl") {
+		for _, entry := range entries {
+			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".jsonl") {
 				continue
 			}
-
-			fullPath := filepath.Join(projPath, f.Name())
-			summary := parseSessionSummary(fullPath, pDir.Name())
-			if summary.ID != "" {
-				sessions = append(sessions, summary)
+			info, err := entry.Info()
+			if err != nil {
+				continue
 			}
+			candidates = append(candidates, fileCandidate{
+				path:    filepath.Join(projPath, entry.Name()),
+				project: pDir.Name(),
+				modTime: info.ModTime(),
+				size:    info.Size(),
+			})
 		}
 	}
 
-	// Sort newest first
+	// 1. Sort newest candidates first
+	sort.Slice(candidates, func(i, j int) bool {
+		return candidates[i].modTime.After(candidates[j].modTime)
+	})
+
+	// If limit is requested, bound candidates to limit * 2 to avoid parsing older files
+	targetCandidates := candidates
+	if limit > 0 && len(targetCandidates) > limit*2 {
+		targetCandidates = targetCandidates[:limit*2]
+	}
+
+	// 2. Identify cached vs uncached files
+	s.sessionCacheMutex.RLock()
+	var uncached []fileCandidate
+	for _, c := range targetCandidates {
+		if entry, ok := s.sessionCache[c.path]; ok && entry.modTime.Equal(c.modTime) && entry.size == c.size {
+			if entry.summary.ID != "" {
+				sessions = append(sessions, entry.summary)
+			}
+		} else {
+			uncached = append(uncached, c)
+		}
+	}
+	s.sessionCacheMutex.RUnlock()
+
+	// 3. Parse uncached files concurrently (worker pool)
+	if len(uncached) > 0 {
+		type parseResult struct {
+			summary SessionSummary
+			size    int64
+		}
+		parsedChan := make(chan parseResult, len(uncached))
+		jobsChan := make(chan fileCandidate, len(uncached))
+		workerCount := 8
+		if len(uncached) < workerCount {
+			workerCount = len(uncached)
+		}
+
+		var wg sync.WaitGroup
+		for range workerCount {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				for job := range jobsChan {
+					sum := parseSessionSummary(job.path, job.project)
+					if sum.ID != "" {
+						parsedChan <- parseResult{
+							summary: sum,
+							size:    job.size,
+						}
+					}
+				}
+			}()
+		}
+
+		for _, u := range uncached {
+			jobsChan <- u
+		}
+		close(jobsChan)
+		wg.Wait()
+		close(parsedChan)
+
+		s.sessionCacheMutex.Lock()
+		for res := range parsedChan {
+			sessions = append(sessions, res.summary)
+			s.sessionCache[res.summary.Path] = sessionCacheEntry{
+				modTime: res.summary.UpdatedAt,
+				size:    res.size,
+				summary: res.summary,
+			}
+		}
+		s.sessionCacheMutex.Unlock()
+	}
+
+	// 4. Sort newest first and limit
 	sort.Slice(sessions, func(i, j int) bool {
 		return sessions[i].UpdatedAt.After(sessions[j].UpdatedAt)
 	})
@@ -1113,6 +1413,11 @@ func parseSessionSummary(filePath string, projectName string) SessionSummary {
 		lineCount++
 		text := strings.TrimSpace(scanner.Text())
 		if text == "" {
+			continue
+		}
+
+		// Fast filtering to skip parsing non-metadata lines
+		if !strings.Contains(text, "\"type\":") && !strings.Contains(text, "\"cost\"") {
 			continue
 		}
 
@@ -1821,9 +2126,7 @@ func (s *Service) RunOmpCliCommand(subcommand string, args []string, cwd string)
 	}
 
 	cmd := prepareCmd(exec.Command(s.ompBin, cmdArgs...))
-	if effectiveCwd != "" {
-		cmd.Dir = effectiveCwd
-	}
+	cmd.Dir = resolveValidWorkingDir(effectiveCwd)
 	cmd.Stdin = strings.NewReader("")
 
 	fullCmd := fmt.Sprintf("omp %s", strings.Join(cmdArgs, " "))

@@ -22,6 +22,8 @@ export const DevToolsDrawer: React.FC<DevToolsDrawerProps> = ({
   const [skillQuery, setSkillQuery] = useState('');
   const [tokenInput, setTokenInput] = useState('');
 
+  const [trimmingRam, setTrimmingRam] = useState(false);
+  const [trimmedSuccess, setTrimmedSuccess] = useState(false);
 
   const handleRunGitStatus = async () => {
     setLoading(true);
@@ -145,15 +147,38 @@ export const DevToolsDrawer: React.FC<DevToolsDrawerProps> = ({
             02 // DEVTOOLS & SYSTEM RUNTIME
           </h3>
         </div>
-        <button
-          onClick={onClose}
-          className="p-1 rounded-[2px] hover:bg-omp-bg text-omp-muted hover:text-white transition"
-          title="Kapat"
-        >
-          <Rune name="indicators-x" size={14} />
-        </button>
+        <div className="flex items-center space-x-2">
+          <button
+            onClick={async () => {
+              setTrimmingRam(true);
+              try {
+                await AppApi.TrimMemory();
+                setTrimmedSuccess(true);
+                setTimeout(() => setTrimmedSuccess(false), 2500);
+              } catch (e) {
+                console.error(e);
+              } finally {
+                setTrimmingRam(false);
+              }
+            }}
+            disabled={trimmingRam}
+            className="px-2 py-0.5 rounded-[2px] bg-omp-bg hover:bg-omp-surfaceLight border border-omp-border text-[10px] font-mono text-zinc-300 hover:text-white transition flex items-center space-x-1"
+            title="Go Garbage Collector'ı tetikler ve kullanılmayan fiziksel RAM (Working Set) sayfalarını Windows işletim sistemine iade eder"
+          >
+            <Rune name="schedule-refresh-cw" size={11} className={trimmingRam ? 'animate-spin text-omp-accent' : (trimmedSuccess ? 'text-emerald-400' : 'text-omp-muted')} />
+            <span className={trimmedSuccess ? 'text-emerald-400 font-bold' : ''}>
+              {trimmedSuccess ? 'RAM BOŞALTILDI ✓' : (trimmingRam ? 'TEMİZLENİYOR...' : 'RAM TEMİZLE')}
+            </span>
+          </button>
+          <button
+            onClick={onClose}
+            className="p-1 rounded-[2px] hover:bg-omp-bg text-omp-muted hover:text-white transition"
+            title="Kapat"
+          >
+            <Rune name="indicators-x" size={14} />
+          </button>
+        </div>
       </div>
-
       {/* Tabs */}
       <div className="flex border-b border-omp-border bg-omp-bg px-2 select-none overflow-x-auto text-xs divide-x divide-omp-border/60">
         <button
