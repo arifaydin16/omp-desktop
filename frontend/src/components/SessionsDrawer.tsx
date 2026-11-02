@@ -36,6 +36,9 @@ export const SessionsDrawer: React.FC<SessionsDrawerProps> = ({
   useEffect(() => {
     if (isOpen) {
       loadSessions();
+    } else {
+      setSelectedSession(null);
+      setSessions([]);
     }
   }, [isOpen]);
 
