@@ -50,6 +50,18 @@ func TestPluginLifecycleAndPersistence(t *testing.T) {
 		t.Errorf("expected ReplyMessage to be populated")
 	}
 
+	// 2a. Test filtering of internal agent scratchpad/monologue
+	rawScratchpad := "Salt okunur bir sorgu talebi — önce veritabanını tespit ediyorum.\nLet me find the relevant table.\n---\n## 📊 Tezgah Durumu Özeti\n| Metrik | Değer |\n|---|---|\n| Aktif | 37 |"
+	cleanedRes := pm.DispatchTaskCompleted(ctx, &TaskResult{
+		Status: "completed",
+		Output: rawScratchpad,
+	})
+	if strings.Contains(cleanedRes.ReplyMessage, "Let me find") {
+		t.Errorf("scratchpad monologue should have been filtered out: %s", cleanedRes.ReplyMessage)
+	}
+	if !strings.Contains(cleanedRes.ReplyMessage, "## 📊 Tezgah Durumu Özeti") {
+		t.Errorf("expected clean table heading in output: %s", cleanedRes.ReplyMessage)
+	}
 	// 2b. Test failure RDP warning hook formatting
 	resFail := &TaskResult{
 		Status: "failed",

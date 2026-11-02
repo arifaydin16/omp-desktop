@@ -109,7 +109,7 @@ func (p *TicketChatbotPlugin) OnTaskCompleted(ctx *TaskContext, result *TaskResu
 			prefix = "🤖 **[OMP AI Destek Asistanı]**\n\n"
 		}
 
-		cleanOutput := strings.TrimSpace(result.Output)
+		cleanOutput := cleanTicketAgentOutput(result.Output)
 		var sb strings.Builder
 		sb.WriteString(prefix)
 		sb.WriteString(cleanOutput)
@@ -130,4 +130,58 @@ func (p *TicketChatbotPlugin) OnTaskCompleted(ctx *TaskContext, result *TaskResu
 // OnTaskFailed logs or notifies ticket failure
 func (p *TicketChatbotPlugin) OnTaskFailed(ctx *TaskContext, err error) error {
 	return nil
+}
+
+// cleanTicketAgentOutput removes internal agent monologue, scratchpad thoughts, and CLI debugging
+func cleanTicketAgentOutput(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return ""
+	}
+
+	// 1. If output contains a divider '---' separating scratchpad notes from the final user response,
+	// take the clean user response after the divider.
+	dividerTokens := []string{"\n---\n", "\n--- \n", "\n***\n"}
+	for _, div := range dividerTokens {
+		if idx := strings.Index(trimmed, div); idx != -1 {
+			after := strings.TrimSpace(trimmed[idx+len(div):])
+			if after != "" {
+				trimmed = after
+				break
+			}
+		}
+	}
+
+	// 2. Filter out any remaining lines that start with typical internal monologue / debug scratchpad
+	lines := strings.Split(trimmed, "\n")
+	var cleanLines []string
+	skippingScratchpad := true
+
+	for _, line := range lines {
+		t := strings.TrimSpace(line)
+		if skippingScratchpad {
+			lower := strings.ToLower(t)
+			if strings.HasPrefix(lower, "salt okunur bir sorgu") ||
+				strings.HasPrefix(lower, "let me find") ||
+				strings.HasPrefix(lower, "password requires") ||
+				strings.HasPrefix(lower, "the `--password") ||
+				strings.HasPrefix(lower, "found the relevant") ||
+				strings.HasPrefix(lower, "i have all the data") ||
+				strings.HasPrefix(lower, "let me clean up") ||
+				strings.HasPrefix(lower, "db: `") ||
+				strings.HasPrefix(lower, "let me use a php") {
+				continue
+			}
+			if t != "" {
+				skippingScratchpad = false
+			}
+		}
+		cleanLines = append(cleanLines, line)
+	}
+
+	result := strings.TrimSpace(strings.Join(cleanLines, "\n"))
+	if result != "" {
+		return result
+	}
+	return trimmed
 }
