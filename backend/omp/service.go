@@ -13,21 +13,12 @@ import (
 	"sort"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"omp-desktop/backend/memory"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
-// prepareCmd hides the console window on Windows
-func prepareCmd(cmd *exec.Cmd) *exec.Cmd {
-	cmd.SysProcAttr = &syscall.SysProcAttr{
-		HideWindow:    true,
-		CreationFlags: 0x08000000, // CREATE_NO_WINDOW
-	}
-	return cmd
-}
 
 // resolveValidWorkingDir ensures that cmd.Dir is ALWAYS an existing, valid directory on local disk.
 // Windows CreateProcess will fail with ERROR_DIRECTORY ("Dizin adı geçersiz") if the working directory

@@ -1,0 +1,66 @@
+name: Build & Release Linux Binary
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Release Tag (e.g. v1.0.0)'
+        required: true
+        default: 'v1.0.0'
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  build-linux:
+    name: Build Linux amd64
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+          cache: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Linux GTK & WebKit Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.0-dev
+
+      - name: Install Wails CLI
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@latest
+
+      - name: Build with Wails
+        run: |
+          wails build -platform linux/amd64
+
+      - name: Package Linux Binary
+        run: |
+          TAG="${{ github.event.inputs.tag_name || github.event.release.tag_name || 'v1.0.0' }}"
+          mkdir -p dist-assets
+          cp build/bin/omp-desktop "dist-assets/omp-desktop-${TAG}-linux-amd64"
+          chmod +x "dist-assets/omp-desktop-${TAG}-linux-amd64"
+          cd build/bin
+          tar -czvf "../../dist-assets/omp-desktop-${TAG}-linux-amd64.tar.gz" omp-desktop
+          cd ../..
+
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.tag_name || github.event.release.tag_name || 'v1.0.0' }}
+          files: |
+            dist-assets/omp-desktop-*-linux-amd64.tar.gz
+            dist-assets/omp-desktop-*-linux-amd64
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

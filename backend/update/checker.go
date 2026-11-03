@@ -7,20 +7,11 @@ import (
 	"regexp"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
-// prepareCmd configures the command to run with a hidden window on Windows
-func prepareCmd(cmd *exec.Cmd) *exec.Cmd {
-	cmd.SysProcAttr = &syscall.SysProcAttr{
-		HideWindow:    true,
-		CreationFlags: 0x08000000, // CREATE_NO_WINDOW
-	}
-	return cmd
-}
 
 // UpdateStatus represents the state of updates
 type UpdateStatus struct {
