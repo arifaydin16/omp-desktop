@@ -130,6 +130,10 @@ export function GetSkillsList() {
   return window['go']['main']['App']['GetSkillsList']();
 }
 
+export function GetStartupPath() {
+  return window['go']['main']['App']['GetStartupPath']();
+}
+
 export function GetUpdateStatus() {
   return window['go']['main']['App']['GetUpdateStatus']();
 }

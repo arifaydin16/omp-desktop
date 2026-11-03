@@ -72,6 +72,10 @@ func (a *App) shutdown(ctx context.Context) {
 	_ = a.remoteApiService.Stop()
 }
 
+// GetStartupPath returns the working directory supplied via CLI argument or Windows context menu
+func (a *App) GetStartupPath() string {
+	return a.ompService.GetInitialWorkingDir()
+}
 // GetRemoteApiConfig returns current configuration for remote HTTP API
 func (a *App) GetRemoteApiConfig() remoteapi.RemoteApiConfig {
 	return a.remoteApiService.GetConfig()

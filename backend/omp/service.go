@@ -36,13 +36,18 @@ func resolveValidWorkingDir(candidate string) string {
 	candidate = strings.TrimSpace(candidate)
 	candidate = strings.Trim(candidate, `"'`)
 
-	// 1. If candidate is a valid local directory (and NOT a UNC/network path)
+	// 1. If candidate is a valid local directory or file (and NOT a UNC/network path)
 	if candidate != "" && !strings.HasPrefix(candidate, `\\`) {
-		if fi, err := os.Stat(candidate); err == nil && fi.IsDir() {
-			return candidate
+		if fi, err := os.Stat(candidate); err == nil {
+			if fi.IsDir() {
+				return filepath.Clean(candidate)
+			}
+			parent := filepath.Dir(candidate)
+			if pfi, perr := os.Stat(parent); perr == nil && pfi.IsDir() {
+				return filepath.Clean(parent)
+			}
 		}
 	}
-
 	// 2. Fallback to User Home directory (e.g. C:\Users\arif)
 	if home, err := os.UserHomeDir(); err == nil && home != "" && !strings.HasPrefix(home, `\\`) {
 		if fi, err := os.Stat(home); err == nil && fi.IsDir() {
@@ -66,6 +71,51 @@ func resolveValidWorkingDir(candidate string) string {
 	}
 
 	return `C:\`
+}
+// parseInitialWorkingDir parses command-line arguments to find directory path flags or arguments
+// Supported formats:
+//   --path="C:\dir" or --path "C:\dir"
+//   --cwd="C:\dir"  or --cwd "C:\dir"
+//   -p="C:\dir"     or -p "C:\dir"
+//   "C:\dir"        (positional argument, e.g. from Windows context menu %V or %1)
+func parseInitialWorkingDir(args []string) string {
+	for i := 1; i < len(args); i++ {
+		arg := strings.TrimSpace(args[i])
+		if arg == "" {
+			continue
+		}
+
+		// Flag formats with =
+		if strings.HasPrefix(arg, "--path=") {
+			return strings.Trim(strings.TrimPrefix(arg, "--path="), `"'`)
+		}
+		if strings.HasPrefix(arg, "--cwd=") {
+			return strings.Trim(strings.TrimPrefix(arg, "--cwd="), `"'`)
+		}
+		if strings.HasPrefix(arg, "-p=") {
+			return strings.Trim(strings.TrimPrefix(arg, "-p="), `"'`)
+		}
+
+		// Flag formats with space (next argument)
+		if (arg == "--path" || arg == "--cwd" || arg == "-p") && i+1 < len(args) {
+			return strings.Trim(args[i+1], `"'`)
+		}
+
+		// Positional argument (not starting with -)
+		if !strings.HasPrefix(arg, "-") {
+			cleaned := strings.Trim(arg, `"'`)
+			if fi, err := os.Stat(cleaned); err == nil {
+				if fi.IsDir() {
+					return filepath.Clean(cleaned)
+				}
+				parent := filepath.Dir(cleaned)
+				if pfi, perr := os.Stat(parent); perr == nil && pfi.IsDir() {
+					return filepath.Clean(parent)
+				}
+			}
+		}
+	}
+	return ""
 }
 
 // AgentRunOptions represents options to run an omp agent session
@@ -181,7 +231,8 @@ type Service struct {
 	activeProcesses map[string]*exec.Cmd
 	activeStdins    map[string]io.WriteCloser
 	mutex           sync.Mutex
-	sessionDir       string
+	initialCwd      string
+	sessionDir      string
 	activeSessionID  string
 	activeSessionIDs map[string]string
 	currentProfile   string
@@ -203,8 +254,14 @@ func NewService() *Service {
 	homeDir, _ := os.UserHomeDir()
 	sessDir := filepath.Join(homeDir, ".omp", "agent", "sessions")
 
+	var initCwd string
+	if parsed := parseInitialWorkingDir(os.Args); parsed != "" {
+		initCwd = resolveValidWorkingDir(parsed)
+	}
+
 	return &Service{
 		ompBin:           bin,
+		initialCwd:       initCwd,
 		sessionDir:       sessDir,
 		activeProcesses:  make(map[string]*exec.Cmd),
 		activeStdins:     make(map[string]io.WriteCloser),
@@ -212,7 +269,6 @@ func NewService() *Service {
 		sessionCache:     make(map[string]sessionCacheEntry),
 	}
 }
-
 // SetProfile sets the active profile name and updates the session directory
 func (s *Service) SetProfile(profile string) {
 	s.mutex.Lock()
@@ -394,12 +450,28 @@ func (s *Service) GetBinaryInfo() (map[string]string, error) {
 			version = strings.TrimSpace(lines[0])
 		}
 	}
-	currentWd := resolveValidWorkingDir("")
+	currentWd := s.initialCwd
+	if currentWd == "" {
+		currentWd = resolveValidWorkingDir("")
+	}
 	return map[string]string{
 		"path":    s.ompBin,
 		"version": version,
 		"cwd":     currentWd,
 	}, nil
+}
+// SetInitialWorkingDir sets or overrides the initial working directory
+func (s *Service) SetInitialWorkingDir(dir string) {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+	s.initialCwd = resolveValidWorkingDir(dir)
+}
+
+// GetInitialWorkingDir returns the initial working directory if set
+func (s *Service) GetInitialWorkingDir() string {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+	return s.initialCwd
 }
 
 // ExecuteAgent launches or feeds into an omp run with real-time streaming

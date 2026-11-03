@@ -1,0 +1,31 @@
+Windows Registry Editor Version 5.00
+
+; ====================================================================
+; OMP Desktop - Windows Context Menu Registration
+; Allows launching OMP Desktop with right-click on folders and background
+; Command: ./omp-desktop.exe --path "%V"
+; ====================================================================
+
+; 1. Right-click on a Folder
+[HKEY_CLASSES_ROOT\Directory\shell\OMPDesktop]
+@="Open with OMP Desktop"
+"Icon"="\"C:\\Users\\pc\\Desktop\\Arif\\omp-desktop\\build\\bin\\omp-desktop.exe\""
+
+[HKEY_CLASSES_ROOT\Directory\shell\OMPDesktop\command]
+@="\"C:\\Users\\pc\\Desktop\\Arif\\omp-desktop\\build\\bin\\omp-desktop.exe\" --path \"%V\""
+
+; 2. Right-click inside Folder Background
+[HKEY_CLASSES_ROOT\Directory\Background\shell\OMPDesktop]
+@="Open with OMP Desktop"
+"Icon"="\"C:\\Users\\pc\\Desktop\\Arif\\omp-desktop\\build\\bin\\omp-desktop.exe\""
+
+[HKEY_CLASSES_ROOT\Directory\Background\shell\OMPDesktop\command]
+@="\"C:\\Users\\pc\\Desktop\\Arif\\omp-desktop\\build\\bin\\omp-desktop.exe\" --path \"%V\""
+
+; 3. Right-click on a Drive (C:, D:, etc.)
+[HKEY_CLASSES_ROOT\Drive\shell\OMPDesktop]
+@="Open with OMP Desktop"
+"Icon"="\"C:\\Users\\pc\\Desktop\\Arif\\omp-desktop\\build\\bin\\omp-desktop.exe\""
+
+[HKEY_CLASSES_ROOT\Drive\shell\OMPDesktop\command]
+@="\"C:\\Users\\pc\\Desktop\\Arif\\omp-desktop\\build\\bin\\omp-desktop.exe\" --path \"%V\""

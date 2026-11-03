@@ -1,0 +1,9 @@
+Windows Registry Editor Version 5.00
+
+; ====================================================================
+; OMP Desktop - Remove Windows Context Menu Registration
+; ====================================================================
+
+[-HKEY_CLASSES_ROOT\Directory\shell\OMPDesktop]
+[-HKEY_CLASSES_ROOT\Directory\Background\shell\OMPDesktop]
+[-HKEY_CLASSES_ROOT\Drive\shell\OMPDesktop]

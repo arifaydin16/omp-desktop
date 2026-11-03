@@ -69,6 +69,8 @@ export function GetSkills():Promise<string>;
 
 export function GetSkillsList():Promise<Array<omp.SkillItem>>;
 
+export function GetStartupPath():Promise<string>;
+
 export function GetUpdateStatus():Promise<update.UpdateStatus>;
 
 export function GetUsage():Promise<Record<string, any>>;
