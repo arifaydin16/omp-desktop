@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+
+	"omp-desktop/backend/omp"
 )
 
 type pluginStoredState struct {
@@ -23,7 +25,7 @@ type PluginManager struct {
 // NewPluginManager creates a manager saving config to desktop_plugins.json in ~/.omp
 func NewPluginManager(configDir string) *PluginManager {
 	if configDir == "" {
-		homeDir, _ := os.UserHomeDir()
+		homeDir := omp.ResolveEffectiveHomeDir()
 		configDir = filepath.Join(homeDir, ".omp")
 	}
 	cfgFile := filepath.Join(configDir, "desktop_plugins.json")

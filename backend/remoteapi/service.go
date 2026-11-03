@@ -47,7 +47,7 @@ type Service struct {
 
 // NewService initializes RemoteApiService with default configuration
 func NewService(ompSvc *omp.Service) *Service {
-	homeDir, _ := os.UserHomeDir()
+	homeDir := omp.ResolveEffectiveHomeDir()
 	cfgPath := filepath.Join(homeDir, ".omp", "remote_api.json")
 
 	svc := &Service{

@@ -72,6 +72,41 @@ func resolveValidWorkingDir(candidate string) string {
 
 	return `C:\`
 }
+// ResolveEffectiveHomeDir returns the user's home directory.
+// When running as a Windows Service under LocalSystem (systemprofile), it automatically
+// detects the interactive user's home from the executable path (e.g. C:\Users\<user>\...)
+// so configurations and tools like .omp and omp.exe are correctly located.
+func ResolveEffectiveHomeDir() string {
+	if custom := os.Getenv("OMP_USER_HOME"); custom != "" {
+		if fi, err := os.Stat(custom); err == nil && fi.IsDir() {
+			return custom
+		}
+	}
+
+	home, _ := os.UserHomeDir()
+	if home != "" && !strings.Contains(strings.ToLower(home), "systemprofile") {
+		return home
+	}
+
+	// Running as LocalSystem/systemprofile: derive user directory from executable path
+	if exe, err := os.Executable(); err == nil {
+		cleanExe := filepath.Clean(exe)
+		parts := strings.Split(cleanExe, string(filepath.Separator))
+		for i := range len(parts) - 1 {
+			if strings.EqualFold(parts[i], "Users") && i+1 < len(parts) {
+				candidate := filepath.Join(parts[0]+string(filepath.Separator), "Users", parts[i+1])
+				if fi, err := os.Stat(candidate); err == nil && fi.IsDir() {
+					return candidate
+				}
+			}
+		}
+	}
+
+	if home != "" {
+		return home
+	}
+	return `C:\`
+}
 // parseInitialWorkingDir parses command-line arguments to find directory path flags or arguments
 // Supported formats:
 //   --path="C:\dir" or --path "C:\dir"
@@ -251,9 +286,8 @@ type sessionCacheEntry struct {
 }
 func NewService() *Service {
 	bin := findOmpBinary()
-	homeDir, _ := os.UserHomeDir()
+	homeDir := ResolveEffectiveHomeDir()
 	sessDir := filepath.Join(homeDir, ".omp", "agent", "sessions")
-
 	var initCwd string
 	if parsed := parseInitialWorkingDir(os.Args); parsed != "" {
 		initCwd = resolveValidWorkingDir(parsed)
@@ -279,7 +313,7 @@ func (s *Service) SetProfile(profile string) {
 	}
 	s.currentProfile = cleaned
 
-	homeDir, _ := os.UserHomeDir()
+	homeDir := ResolveEffectiveHomeDir()
 	if cleaned != "default" {
 		s.sessionDir = filepath.Join(homeDir, ".omp", "profiles", cleaned, "agent", "sessions")
 	} else {
@@ -380,10 +414,7 @@ func (s *Service) ClearActiveSessionInstance(instanceId string) {
 // GetProfiles returns all available profile names from ~/.omp/profiles
 func (s *Service) GetProfiles() []string {
 	profiles := []string{"default"}
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return profiles
-	}
+	homeDir := ResolveEffectiveHomeDir()
 	profDir := filepath.Join(homeDir, ".omp", "profiles")
 	entries, err := os.ReadDir(profDir)
 	if err == nil {
@@ -425,11 +456,17 @@ func (s *Service) SetTurnCompleteHook(hook func(instanceId string, output string
 func findOmpBinary() string {
 	// 1. Check local appdata omp.exe
 	localAppData := os.Getenv("LOCALAPPDATA")
-	if localAppData != "" {
+	if localAppData != "" && !strings.Contains(strings.ToLower(localAppData), "systemprofile") {
 		p := filepath.Join(localAppData, "omp", "omp.exe")
 		if fi, err := os.Stat(p); err == nil && !fi.IsDir() {
 			return p
 		}
+	}
+	// If running under LocalSystem, resolve user's LocalAppData
+	home := ResolveEffectiveHomeDir()
+	userOmp := filepath.Join(home, "AppData", "Local", "omp", "omp.exe")
+	if fi, err := os.Stat(userOmp); err == nil && !fi.IsDir() {
+		return userOmp
 	}
 	// 2. Check PATH
 	if p, err := exec.LookPath("omp"); err == nil {
@@ -437,7 +474,6 @@ func findOmpBinary() string {
 	}
 	return "omp"
 }
-
 // GetBinaryInfo returns omp path and version
 func (s *Service) GetBinaryInfo() (map[string]string, error) {
 	cmd := prepareCmd(exec.Command(s.ompBin, "--help"))

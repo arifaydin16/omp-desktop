@@ -23,6 +23,15 @@ func main() {
 	// Create an instance of the app structure
 	app := NewApp()
 
+	// 1. Check if running as a Windows Service managed by Service Control Manager (SCM)
+	if isWindowsService() {
+		if err := runWindowsService(app); err != nil {
+			println("Windows Service Error:", err.Error())
+		}
+		return
+	}
+
+	// 2. Check if running as an interactive console service / daemon via CLI flag
 	if isServiceMode(os.Args) {
 		if err := app.RunHeadlessService(); err != nil {
 			println("Service Error:", err.Error())

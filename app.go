@@ -80,40 +80,30 @@ func (a *App) shutdown(ctx context.Context) {
 func (a *App) GetStartupPath() string {
 	return a.ompService.GetInitialWorkingDir()
 }
-// RunHeadlessService runs OMP Desktop in headless daemon/service mode without opening a GUI
-func (a *App) RunHeadlessService() error {
-	attachConsole()
-
-	fmt.Println("==================================================================")
-	fmt.Println("       oh-my-pi Desktop - Headless Service / Daemon Mode")
-	fmt.Println("==================================================================")
-
-	// Determine working directory
-	startupPath := a.ompService.GetInitialWorkingDir()
-	binInfo, _ := a.ompService.GetBinaryInfo()
-	fmt.Printf("[INFO] OMP Binary      : %s\n", binInfo["path"])
-	fmt.Printf("[INFO] OMP Version     : %s\n", binInfo["version"])
-	if startupPath != "" {
-		fmt.Printf("[INFO] Workspace Path  : %s\n", startupPath)
-	} else {
-		fmt.Printf("[INFO] Workspace Path  : %s (default)\n", binInfo["cwd"])
-	}
-
-	// Parse optional CLI overrides (e.g. --port, --poll, --no-poll)
-	for i := 1; i < len(os.Args); i++ {
-		arg := strings.TrimSpace(os.Args[i])
+// applyCliOverrides parses flags from CLI or Windows Service arguments
+func applyCliOverrides(a *App, args []string) {
+	for i := 1; i < len(args); i++ {
+		arg := strings.TrimSpace(args[i])
 		if strings.HasPrefix(arg, "--port=") {
 			if p, err := strconv.Atoi(strings.TrimPrefix(arg, "--port=")); err == nil && p > 0 {
 				cfg := a.remoteApiService.GetConfig()
 				cfg.Port = p
 				_ = a.remoteApiService.SetConfig(cfg)
 			}
-		} else if arg == "--port" && i+1 < len(os.Args) {
-			if p, err := strconv.Atoi(os.Args[i+1]); err == nil && p > 0 {
+		} else if arg == "--port" && i+1 < len(args) {
+			if p, err := strconv.Atoi(args[i+1]); err == nil && p > 0 {
 				cfg := a.remoteApiService.GetConfig()
 				cfg.Port = p
 				_ = a.remoteApiService.SetConfig(cfg)
 			}
+		} else if strings.HasPrefix(arg, "--path=") {
+			a.ompService.SetInitialWorkingDir(strings.TrimPrefix(arg, "--path="))
+		} else if (arg == "--path" || arg == "--cwd" || arg == "-p") && i+1 < len(args) {
+			a.ompService.SetInitialWorkingDir(args[i+1])
+		} else if strings.HasPrefix(arg, "--cwd=") {
+			a.ompService.SetInitialWorkingDir(strings.TrimPrefix(arg, "--cwd="))
+		} else if strings.HasPrefix(arg, "-p=") {
+			a.ompService.SetInitialWorkingDir(strings.TrimPrefix(arg, "-p="))
 		} else if arg == "--poll" {
 			cfg := a.remoteApiService.GetConfig()
 			cfg.PollingEnabled = true
@@ -123,6 +113,19 @@ func (a *App) RunHeadlessService() error {
 			cfg.PollingEnabled = false
 			_ = a.remoteApiService.SetConfig(cfg)
 		}
+	}
+}
+
+// startServiceWorkers initializes and runs the background HTTP API, Poller, and Memory Optimizer
+func (a *App) startServiceWorkers() {
+	startupPath := a.ompService.GetInitialWorkingDir()
+	binInfo, _ := a.ompService.GetBinaryInfo()
+	fmt.Printf("[INFO] OMP Binary      : %s\n", binInfo["path"])
+	fmt.Printf("[INFO] OMP Version     : %s\n", binInfo["version"])
+	if startupPath != "" {
+		fmt.Printf("[INFO] Workspace Path  : %s\n", startupPath)
+	} else {
+		fmt.Printf("[INFO] Workspace Path  : %s (default)\n", binInfo["cwd"])
 	}
 
 	// Start Remote HTTP API
@@ -139,11 +142,28 @@ func (a *App) RunHeadlessService() error {
 		a.remoteApiService.StartPolling()
 		fmt.Printf("[INFO] Outbound Poller : ACTIVE (URL: %s, Interval: %ds)\n", cfg.PollingURL, cfg.PollingInterval)
 	} else {
-		fmt.Println("[INFO] Outbound Poller : INACTIVE (Enable via GUI or configure pollingUrl)")
+		fmt.Println("[INFO] Outbound Poller : INACTIVE")
 	}
 
 	// Start periodic memory optimizer
 	memory.StartPeriodicOptimization(45 * time.Second)
+}
+
+// stopServiceWorkers terminates background workers gracefully
+func (a *App) stopServiceWorkers() {
+	a.shutdown(context.Background())
+}
+
+// RunHeadlessService runs OMP Desktop in headless daemon/service mode without opening a GUI
+func (a *App) RunHeadlessService() error {
+	attachConsole()
+
+	fmt.Println("==================================================================")
+	fmt.Println("       oh-my-pi Desktop - Headless Service / Daemon Mode")
+	fmt.Println("==================================================================")
+
+	applyCliOverrides(a, os.Args)
+	a.startServiceWorkers()
 
 	fmt.Println("------------------------------------------------------------------")
 	fmt.Println("[INFO] Service is now running in background. Press Ctrl+C to stop.")
@@ -155,7 +175,7 @@ func (a *App) RunHeadlessService() error {
 	<-sigChan
 
 	fmt.Println("\n[INFO] Termination signal received. Stopping OMP Desktop service...")
-	a.shutdown(context.Background())
+	a.stopServiceWorkers()
 	fmt.Println("[INFO] Service stopped gracefully.")
 	return nil
 }
