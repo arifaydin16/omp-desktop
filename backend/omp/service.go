@@ -591,8 +591,19 @@ func (s *Service) ExecuteAgentWithOutput(opts AgentRunOptions) (string, error) {
 	var outputMutex sync.Mutex
 	var args []string
 	args = append(args, "-p", "--mode=json", "--print-thoughts")
-	if opts.Model != "" {
-		args = append(args, "--model="+opts.Model)
+	modelToUse := opts.Model
+	if modelToUse == "" {
+		if roles, err := s.GetConfigKey("modelRoles"); err == nil && roles != "" {
+			var rMap map[string]string
+			if jsonErr := json.Unmarshal([]byte(roles), &rMap); jsonErr == nil {
+				if def, ok := rMap["default"]; ok && def != "" {
+					modelToUse = strings.Split(def, ":")[0]
+				}
+			}
+		}
+	}
+	if modelToUse != "" {
+		args = append(args, "--model="+modelToUse)
 	}
 	if opts.SmolModel != "" {
 		args = append(args, "--smol="+opts.SmolModel)

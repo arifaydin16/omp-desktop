@@ -746,6 +746,7 @@ func (s *Service) executePolledTask(task *TicketTask) {
 		}
 	}
 	fmt.Printf("[OMP Service] [%s] Received task #%v (Subject: %s)\n", time.Now().Format("15:04:05"), task.TaskID, task.Subject)
+	omp.LogService("[TASK #%v BAŞLATILIYOR] Konu: '%s', Dizin: '%s', Prompt uzunluğu: %d karakter", task.TaskID, task.Subject, targetCwd, len(task.Prompt))
 	runInfo := &RunInfo{
 		RunID:     "poll-task-" + taskIDStr,
 		Cwd:       targetCwd,
@@ -800,6 +801,7 @@ func (s *Service) executePolledTask(task *TicketTask) {
 		ApprovalMode: "yolo",
 		AutoApprove:  true,
 	})
+	omp.LogService("[TASK #%v ÇALIŞTI] Çıktı uzunluğu: %d, Hata: %v", task.TaskID, len(agentOutput), runErr)
 
 	// If the agent turn errored out or stopped prematurely without output, auto-retry once with "devam et"
 	if runErr != nil || strings.TrimSpace(agentOutput) == "" {

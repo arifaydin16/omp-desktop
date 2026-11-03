@@ -54,11 +54,19 @@ const DEFAULT_PANES: InstancePaneState[] = [
 ];
 
 function applyStreamToMessages(msgs: ChatMessage[], streamType: string, content: string): ChatMessage[] {
-  if (msgs.length === 0) return msgs;
   const copy = [...msgs];
+  if (copy.length === 0 || copy[copy.length - 1].role !== 'assistant') {
+    copy.push({
+      id: 'asst_stream_' + Date.now(),
+      role: 'assistant',
+      text: '',
+      timestamp: new Date().toISOString(),
+      toolCalls: [],
+      blocks: [],
+      workingStatus: 'Çalışıyor...',
+    });
+  }
   const last = copy[copy.length - 1];
-  if (last.role !== 'assistant') return msgs;
-
   const trimmed = content.trim();
 
   if (
@@ -192,11 +200,19 @@ function applyDoneToMessages(msgs: ChatMessage[], exitCode: number): ChatMessage
 }
 
 function applyToolStartToMessages(msgs: ChatMessage[], obj: Record<string, unknown>): ChatMessage[] {
-  if (msgs.length === 0) return msgs;
   const copy = [...msgs];
+  if (copy.length === 0 || copy[copy.length - 1].role !== 'assistant') {
+    copy.push({
+      id: 'asst_tool_' + Date.now(),
+      role: 'assistant',
+      text: '',
+      timestamp: new Date().toISOString(),
+      toolCalls: [],
+      blocks: [],
+      workingStatus: 'Araç çalıştırılıyor...',
+    });
+  }
   const last = copy[copy.length - 1];
-  if (last.role !== 'assistant') return msgs;
-
   const callId = String(obj.toolCallId || 'tc_' + Math.random().toString(36).slice(2));
   const toolName = String(obj.toolName || 'tool');
   const intent = typeof obj.intent === 'string' ? obj.intent : undefined;
@@ -747,6 +763,7 @@ export function App() {
         cwd: taskCwd || s.cwd,
         taskId: taskId || s.taskId,
         ticketId: taskId || s.ticketId,
+        messages: [...s.messages, userMsg, assistantMsg],
         isWorking: true,
       }));
 
@@ -759,6 +776,7 @@ export function App() {
             title: titlePrefix,
             taskId: taskId || p.taskId,
             ticketId: taskId || p.ticketId,
+            messages: [...p.messages, userMsg, assistantMsg],
             attachedFiles: [],
             isWorking: true,
           };
