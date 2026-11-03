@@ -62,6 +62,21 @@ func TestPluginLifecycleAndPersistence(t *testing.T) {
 	if !strings.Contains(cleanedRes.ReplyMessage, "## 📊 Tezgah Durumu Özeti") {
 		t.Errorf("expected clean table heading in output: %s", cleanedRes.ReplyMessage)
 	}
+	// 2a-2. Test preservation of multiple tables separated by markdown dividers
+	multiTableInput := "Aşağıda veriler yer almaktadır:\n\n### 1. Tablo: Aktifler\n| ID | Ad |\n|---|---|\n| 1 | CNC |\n\n---\n\n### 2. Tablo: Pasifler\n| ID | Ad |\n|---|---|\n| 2 | Torna |\n\n---\n\n### 3. Tablo: Yedekler\n| Parça | Adet |\n|---|---|\n| Rulman | 5 |"
+	multiRes := pm.DispatchTaskCompleted(ctx, &TaskResult{
+		Status: "completed",
+		Output: multiTableInput,
+	})
+	if !strings.Contains(multiRes.ReplyMessage, "### 1. Tablo: Aktifler") || !strings.Contains(multiRes.ReplyMessage, "CNC") {
+		t.Errorf("First table was lost: %s", multiRes.ReplyMessage)
+	}
+	if !strings.Contains(multiRes.ReplyMessage, "### 2. Tablo: Pasifler") || !strings.Contains(multiRes.ReplyMessage, "Torna") {
+		t.Errorf("Second table was lost: %s", multiRes.ReplyMessage)
+	}
+	if !strings.Contains(multiRes.ReplyMessage, "### 3. Tablo: Yedekler") || !strings.Contains(multiRes.ReplyMessage, "Rulman") {
+		t.Errorf("Third table was lost: %s", multiRes.ReplyMessage)
+	}
 	// 2b. Test failure RDP warning hook formatting
 	resFail := &TaskResult{
 		Status: "failed",

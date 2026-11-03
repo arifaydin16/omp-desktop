@@ -132,30 +132,18 @@ func (p *TicketChatbotPlugin) OnTaskFailed(ctx *TaskContext, err error) error {
 	return nil
 }
 
-// cleanTicketAgentOutput removes internal agent monologue, scratchpad thoughts, and CLI debugging
+// cleanTicketAgentOutput removes internal agent monologue and initial debug scratchpad
+// while strictly preserving all tables, dividers, and user-facing content verbatim.
 func cleanTicketAgentOutput(raw string) string {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {
 		return ""
 	}
 
-	// 1. If output contains a divider '---' separating scratchpad notes from the final user response,
-	// take the clean user response after the divider.
-	dividerTokens := []string{"\n---\n", "\n--- \n", "\n***\n"}
-	for _, div := range dividerTokens {
-		if idx := strings.Index(trimmed, div); idx != -1 {
-			after := strings.TrimSpace(trimmed[idx+len(div):])
-			if after != "" {
-				trimmed = after
-				break
-			}
-		}
-	}
-
-	// 2. Filter out any remaining lines that start with typical internal monologue / debug scratchpad
 	lines := strings.Split(trimmed, "\n")
 	var cleanLines []string
 	skippingScratchpad := true
+	skippedMonologueLines := false
 
 	for _, line := range lines {
 		t := strings.TrimSpace(line)
@@ -170,11 +158,18 @@ func cleanTicketAgentOutput(raw string) string {
 				strings.HasPrefix(lower, "let me clean up") ||
 				strings.HasPrefix(lower, "db: `") ||
 				strings.HasPrefix(lower, "let me use a php") {
+				skippedMonologueLines = true
 				continue
 			}
-			if t != "" {
-				skippingScratchpad = false
+			// If we skipped monologue lines and immediately encounter an initial divider, skip that divider too
+			if skippedMonologueLines && (t == "---" || t == "***" || t == "--- " || t == "*** ") {
+				continue
 			}
+			if t == "" {
+				continue
+			}
+			// First real content line reached (heading, table, list, text)
+			skippingScratchpad = false
 		}
 		cleanLines = append(cleanLines, line)
 	}
