@@ -87,7 +87,6 @@ func ResolveEffectiveHomeDir() string {
 	if home != "" && !strings.Contains(strings.ToLower(home), "systemprofile") {
 		return home
 	}
-
 	// Running as LocalSystem/systemprofile: derive user directory from executable path
 	if exe, err := os.Executable(); err == nil {
 		cleanExe := filepath.Clean(exe)
@@ -97,6 +96,36 @@ func ResolveEffectiveHomeDir() string {
 				candidate := filepath.Join(parts[0]+string(filepath.Separator), "Users", parts[i+1])
 				if fi, err := os.Stat(candidate); err == nil && fi.IsDir() {
 					return candidate
+				}
+			}
+		}
+	}
+
+	// Fallback for LocalSystem: scan SystemDrive\Users for a user profile containing .omp
+	sysDrive := os.Getenv("SystemDrive")
+	if sysDrive == "" {
+		sysDrive = "C:"
+	}
+	usersDir := filepath.Join(sysDrive+string(filepath.Separator), "Users")
+	if entries, err := os.ReadDir(usersDir); err == nil {
+		for _, e := range entries {
+			if e.IsDir() {
+				name := e.Name()
+				if strings.EqualFold(name, "Public") || strings.EqualFold(name, "Default") || strings.EqualFold(name, "Default User") || strings.EqualFold(name, "All Users") {
+					continue
+				}
+				userDir := filepath.Join(usersDir, name)
+				if fi, err := os.Stat(filepath.Join(userDir, ".omp")); err == nil && fi.IsDir() {
+					return userDir
+				}
+			}
+		}
+		// If no .omp found yet, pick first regular user directory
+		for _, e := range entries {
+			if e.IsDir() {
+				name := e.Name()
+				if !strings.EqualFold(name, "Public") && !strings.EqualFold(name, "Default") && !strings.EqualFold(name, "Default User") && !strings.EqualFold(name, "All Users") {
+					return filepath.Join(usersDir, name)
 				}
 			}
 		}

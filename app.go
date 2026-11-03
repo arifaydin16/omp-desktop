@@ -112,6 +112,34 @@ func applyCliOverrides(a *App, args []string) {
 			cfg := a.remoteApiService.GetConfig()
 			cfg.PollingEnabled = false
 			_ = a.remoteApiService.SetConfig(cfg)
+		} else if strings.HasPrefix(arg, "--poll-url=") {
+			cfg := a.remoteApiService.GetConfig()
+			cfg.PollingURL = strings.TrimPrefix(arg, "--poll-url=")
+			cfg.PollingEnabled = true
+			_ = a.remoteApiService.SetConfig(cfg)
+		} else if arg == "--poll-url" && i+1 < len(args) {
+			cfg := a.remoteApiService.GetConfig()
+			cfg.PollingURL = args[i+1]
+			cfg.PollingEnabled = true
+			_ = a.remoteApiService.SetConfig(cfg)
+		} else if strings.HasPrefix(arg, "--poll-key=") {
+			cfg := a.remoteApiService.GetConfig()
+			cfg.PollingApiKey = strings.TrimPrefix(arg, "--poll-key=")
+			cfg.PollingEnabled = true
+			_ = a.remoteApiService.SetConfig(cfg)
+		} else if arg == "--poll-key" && i+1 < len(args) {
+			cfg := a.remoteApiService.GetConfig()
+			cfg.PollingApiKey = args[i+1]
+			cfg.PollingEnabled = true
+			_ = a.remoteApiService.SetConfig(cfg)
+		} else if strings.HasPrefix(arg, "--poll-interval=") {
+			if sec, err := strconv.Atoi(strings.TrimPrefix(arg, "--poll-interval=")); err == nil && sec > 0 {
+				cfg := a.remoteApiService.GetConfig()
+				cfg.PollingInterval = sec
+				_ = a.remoteApiService.SetConfig(cfg)
+			}
+		} else if strings.HasPrefix(arg, "--user-home=") {
+			_ = os.Setenv("OMP_USER_HOME", strings.TrimPrefix(arg, "--user-home="))
 		}
 	}
 }
