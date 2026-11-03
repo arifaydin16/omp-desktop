@@ -75,12 +75,14 @@ type PromptRequest struct {
 
 // PollResponse represents response received from remote server when polling
 type PollResponse struct {
-	Success bool        `json:"success"`
-	HasTask bool        `json:"has_task"`
-	Message string      `json:"message,omitempty"`
-	Task    *RemoteTask `json:"task,omitempty"`
+	Success     bool        `json:"success"`
+	HasTask     bool        `json:"has_task"`
+	Message     string      `json:"message,omitempty"`
+	CompanyName string      `json:"company_name,omitempty"`
+	CompanyID   any         `json:"company_id,omitempty"`
+	Error       string      `json:"error,omitempty"`
+	Task        *RemoteTask `json:"task,omitempty"`
 }
-
 // RemoteTask represents the task payload returned by remote task server
 type RemoteTask struct {
 	TaskID         any    `json:"task_id"`

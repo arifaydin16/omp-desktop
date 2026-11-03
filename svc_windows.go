@@ -5,6 +5,8 @@ package main
 import (
 	"strings"
 
+	"omp-desktop/backend/omp"
+
 	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/svc"
 )
@@ -27,16 +29,19 @@ func (m *ompWindowsService) Execute(args []string, r <-chan svc.ChangeRequest, c
 	const cmdsAccepted = svc.AcceptStop | svc.AcceptShutdown
 	changes <- svc.Status{State: svc.StartPending}
 
+	omp.LogService("[SCM] Windows Hizmet Yöneticisi (SCM) servisi başlattı.")
+
 	// Parse command line from process creation (SCM binPath)
 	rawCmdLine := windows.UTF16PtrToString(windows.GetCommandLine())
 	parsedArgs := splitCommandLine(rawCmdLine)
+	omp.LogService("[SCM] Komut Satırı: %s", rawCmdLine)
 	applyCliOverrides(m.app, parsedArgs)
 
 	// Start background workers (Remote API, Poller, Memory optimizer)
 	m.app.startServiceWorkers()
 
 	changes <- svc.Status{State: svc.Running, Accepts: cmdsAccepted}
-
+	omp.LogService("[SCM] Hizmet durumu: RUNNING (Çalışıyor)")
 loop:
 	for req := range r {
 		switch req.Cmd {

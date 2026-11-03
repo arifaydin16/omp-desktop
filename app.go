@@ -120,29 +120,32 @@ func applyCliOverrides(a *App, args []string) {
 func (a *App) startServiceWorkers() {
 	startupPath := a.ompService.GetInitialWorkingDir()
 	binInfo, _ := a.ompService.GetBinaryInfo()
-	fmt.Printf("[INFO] OMP Binary      : %s\n", binInfo["path"])
-	fmt.Printf("[INFO] OMP Version     : %s\n", binInfo["version"])
+	omp.LogService("==================================================================")
+	omp.LogService("       oh-my-pi Desktop - Background Service Workers")
+	omp.LogService("==================================================================")
+	omp.LogService("[SERVICE] OMP Binary      : %s", binInfo["path"])
+	omp.LogService("[SERVICE] OMP Version     : %s", binInfo["version"])
 	if startupPath != "" {
-		fmt.Printf("[INFO] Workspace Path  : %s\n", startupPath)
+		omp.LogService("[SERVICE] Workspace Path  : %s", startupPath)
 	} else {
-		fmt.Printf("[INFO] Workspace Path  : %s (default)\n", binInfo["cwd"])
+		omp.LogService("[SERVICE] Workspace Path  : %s (default)", binInfo["cwd"])
 	}
 
 	// Start Remote HTTP API
 	cfg := a.remoteApiService.GetConfig()
 	if err := a.remoteApiService.Start(); err != nil {
-		fmt.Printf("[WARN] Could not bind Remote HTTP API: %v\n", err)
+		omp.LogService("[SERVICE WARN] Could not bind Remote HTTP API: %v", err)
 	} else {
-		fmt.Printf("[INFO] Remote HTTP API : http://%s:%d\n", cfg.Host, cfg.Port)
-		fmt.Printf("[INFO] API Key         : %s\n", cfg.ApiKey)
+		omp.LogService("[SERVICE] Remote HTTP API : http://%s:%d", cfg.Host, cfg.Port)
+		omp.LogService("[SERVICE] API Key         : %s", cfg.ApiKey)
 	}
 
 	// Start Polling Worker if configured
 	if cfg.PollingEnabled && strings.TrimSpace(cfg.PollingURL) != "" {
 		a.remoteApiService.StartPolling()
-		fmt.Printf("[INFO] Outbound Poller : ACTIVE (URL: %s, Interval: %ds)\n", cfg.PollingURL, cfg.PollingInterval)
+		omp.LogService("[SERVICE] Outbound Poller : ACTIVE (URL: %s, Interval: %ds)", cfg.PollingURL, cfg.PollingInterval)
 	} else {
-		fmt.Println("[INFO] Outbound Poller : INACTIVE")
+		omp.LogService("[SERVICE] Outbound Poller : INACTIVE (PollingEnabled=%v, PollingURL='%s')", cfg.PollingEnabled, cfg.PollingURL)
 	}
 
 	// Start periodic memory optimizer

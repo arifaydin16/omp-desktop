@@ -597,7 +597,7 @@ func (s *Service) startPollingWorkerLocked() {
 
 	s.lastPollStatus = fmt.Sprintf("Yoklama başlatıldı (%ds aralıkla)", interval)
 	s.emitStatusLocked()
-
+	omp.LogService("[POLL START] Yoklama döngüsü başlatıldı (Aralık: %ds, Hedef: %s)", interval, s.config.PollingURL)
 	go func() {
 		defer ticker.Stop()
 		// Initial poll immediately
@@ -621,6 +621,7 @@ func (s *Service) stopPollingWorkerLocked() {
 		s.pollActive = false
 		s.lastPollStatus = "Yoklama durduruldu"
 		s.emitStatusLocked()
+		omp.LogService("[POLL STOP] Yoklama döngüsü durduruldu.")
 	}
 }
 
@@ -645,6 +646,7 @@ func (s *Service) pollOnce() {
 		s.lastPollStatus = "Polling API Anahtarı eksik (Firma Key gerekli)"
 		s.emitStatusLocked()
 		s.mu.Unlock()
+		omp.LogService("[POLL UYARI] Polling API anahtarı boş. Firma yetkilendirmesi yapılamıyor.")
 		return
 	}
 	s.mu.Unlock()
@@ -670,6 +672,7 @@ func (s *Service) pollOnce() {
 		s.lastPollStatus = "Bağlantı hatası: " + err.Error()
 		s.emitStatusLocked()
 		s.mu.Unlock()
+		omp.LogService("[POLL HATA] Sunucuya erişilemedi: %v (Hedef: %s)", err, pollURL)
 		return
 	}
 	defer resp.Body.Close()
@@ -690,6 +693,7 @@ func (s *Service) pollOnce() {
 		}
 		s.emitStatusLocked()
 		s.mu.Unlock()
+		omp.LogService("[POLL HTTP %d] Sunucu hata döndürdü: %s (Hedef: %s)", resp.StatusCode, errMsg, pollURL)
 		return
 	}
 
@@ -711,6 +715,11 @@ func (s *Service) pollOnce() {
 		}
 		s.emitStatusLocked()
 		s.mu.Unlock()
+		compName := pResp.CompanyName
+		if compName == "" {
+			compName = "Firma"
+		}
+		omp.LogService("[POLL] [%s] Yoklama yapıldı -> %s (%s, HTTP 200)", time.Now().Format("15:04:05"), s.lastPollStatus, compName)
 		return
 	}
 
@@ -719,7 +728,7 @@ func (s *Service) pollOnce() {
 	s.lastPollStatus = fmt.Sprintf("Görev alındı: #%s", taskIDStr)
 	s.emitStatusLocked()
 	s.mu.Unlock()
-
+	omp.LogService("[POLL GÖREV] [%s] YENİ GÖREV ALINDI: #%v (Ticket #%v, Firma: %s, Konu: '%s')", time.Now().Format("15:04:05"), task.TaskID, task.TicketID, task.CompanyName, task.Subject)
 	// Execute task in live workspace
 	go s.executePolledTask(task)
 }
@@ -850,6 +859,7 @@ func (s *Service) executePolledTask(task *TicketTask) {
 	s.lastPollStatus = fmt.Sprintf("Görev tamamlandı (#%s): %s", taskIDStr, finalStatus)
 	s.emitStatusLocked()
 	s.mu.Unlock()
+	omp.LogService("[POLL TAMAMLANDI] Görev #%s sonuçlandı (Durum: %s)", taskIDStr, finalStatus)
 
 	// Send completion callback via unified callback helper
 	_ = s.SendTaskCompletionCallback(task, agentOutput, runErr, targetCwd)
@@ -1001,9 +1011,11 @@ func (s *Service) SendTaskCompletionCallback(task *TicketTask, agentOutput strin
 	client := &http.Client{Timeout: 15 * time.Second}
 	resp, err := client.Do(cbReq)
 	if err != nil {
+		omp.LogService("[CALLBACK HATA] Callback gönderilemedi: %v (Hedef: %s)", err, callbackURL)
 		return err
 	}
 	defer resp.Body.Close()
+	omp.LogService("[CALLBACK BAŞARILI] Callback sunucuya iletildi (HTTP %d, Hedef: %s)", resp.StatusCode, callbackURL)
 
 	if s.wailsCtx != nil {
 		runtime.EventsEmit(s.wailsCtx, "task:reply_synced", map[string]interface{}{
