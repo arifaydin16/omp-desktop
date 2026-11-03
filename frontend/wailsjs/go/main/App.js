@@ -202,6 +202,10 @@ export function RunGitStatus(arg1) {
   return window['go']['main']['App']['RunGitStatus'](arg1);
 }
 
+export function RunHeadlessService() {
+  return window['go']['main']['App']['RunHeadlessService']();
+}
+
 export function RunOmpCliCommand(arg1, arg2, arg3) {
   return window['go']['main']['App']['RunOmpCliCommand'](arg1, arg2, arg3);
 }

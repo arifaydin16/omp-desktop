@@ -105,6 +105,8 @@ export function RunGitDiff(arg1:string):Promise<string>;
 
 export function RunGitStatus(arg1:string):Promise<string>;
 
+export function RunHeadlessService():Promise<void>;
+
 export function RunOmpCliCommand(arg1:string,arg2:Array<string>,arg3:string):Promise<omp.CliCommandResult>;
 
 export function SaveApiKeyCredential(arg1:string,arg2:string):Promise<void>;

@@ -181,6 +181,19 @@ func (s *Service) Start() error {
 	s.emitStatusLocked()
 	return nil
 }
+// StartPolling starts the background polling loop if configured
+func (s *Service) StartPolling() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.startPollingWorkerLocked()
+}
+
+// StopPolling stops the background polling loop
+func (s *Service) StopPolling() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.stopPollingWorkerLocked()
+}
 
 // Stop terminates the HTTP server and Polling worker
 func (s *Service) Stop() error {
@@ -723,10 +736,9 @@ func (s *Service) executePolledTask(task *TicketTask) {
 			targetCwd, _ = os.Getwd()
 		}
 	}
-
+	fmt.Printf("[OMP Service] [%s] Received task #%v (Subject: %s)\n", time.Now().Format("15:04:05"), task.TaskID, task.Subject)
 	runInfo := &RunInfo{
 		RunID:     "poll-task-" + taskIDStr,
-		Prompt:    task.Prompt,
 		Cwd:       targetCwd,
 		StartedAt: time.Now(),
 		Status:    "running",
@@ -926,7 +938,7 @@ func (s *Service) SendTaskCompletionCallback(task *TicketTask, agentOutput strin
 		finalStatus = "failed"
 		errMsg = runErr.Error()
 	}
-
+	fmt.Printf("[OMP Service] [%s] Task #%v finished with status: %s\n", time.Now().Format("15:04:05"), task.TaskID, finalStatus)
 	refID := task.ReferenceID
 	if refID == nil || refID == "" {
 		refID = task.TicketID

@@ -6,14 +6,18 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/signal"
 	"path/filepath"
+	"strconv"
+	"strings"
+	"syscall"
 	"time"
 
+	"omp-desktop/backend/memory"
 	"omp-desktop/backend/omp"
 	"omp-desktop/backend/plugins"
 	"omp-desktop/backend/remoteapi"
 	"omp-desktop/backend/update"
-	"omp-desktop/backend/memory"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
@@ -75,6 +79,85 @@ func (a *App) shutdown(ctx context.Context) {
 // GetStartupPath returns the working directory supplied via CLI argument or Windows context menu
 func (a *App) GetStartupPath() string {
 	return a.ompService.GetInitialWorkingDir()
+}
+// RunHeadlessService runs OMP Desktop in headless daemon/service mode without opening a GUI
+func (a *App) RunHeadlessService() error {
+	attachConsole()
+
+	fmt.Println("==================================================================")
+	fmt.Println("       oh-my-pi Desktop - Headless Service / Daemon Mode")
+	fmt.Println("==================================================================")
+
+	// Determine working directory
+	startupPath := a.ompService.GetInitialWorkingDir()
+	binInfo, _ := a.ompService.GetBinaryInfo()
+	fmt.Printf("[INFO] OMP Binary      : %s\n", binInfo["path"])
+	fmt.Printf("[INFO] OMP Version     : %s\n", binInfo["version"])
+	if startupPath != "" {
+		fmt.Printf("[INFO] Workspace Path  : %s\n", startupPath)
+	} else {
+		fmt.Printf("[INFO] Workspace Path  : %s (default)\n", binInfo["cwd"])
+	}
+
+	// Parse optional CLI overrides (e.g. --port, --poll, --no-poll)
+	for i := 1; i < len(os.Args); i++ {
+		arg := strings.TrimSpace(os.Args[i])
+		if strings.HasPrefix(arg, "--port=") {
+			if p, err := strconv.Atoi(strings.TrimPrefix(arg, "--port=")); err == nil && p > 0 {
+				cfg := a.remoteApiService.GetConfig()
+				cfg.Port = p
+				_ = a.remoteApiService.SetConfig(cfg)
+			}
+		} else if arg == "--port" && i+1 < len(os.Args) {
+			if p, err := strconv.Atoi(os.Args[i+1]); err == nil && p > 0 {
+				cfg := a.remoteApiService.GetConfig()
+				cfg.Port = p
+				_ = a.remoteApiService.SetConfig(cfg)
+			}
+		} else if arg == "--poll" {
+			cfg := a.remoteApiService.GetConfig()
+			cfg.PollingEnabled = true
+			_ = a.remoteApiService.SetConfig(cfg)
+		} else if arg == "--no-poll" {
+			cfg := a.remoteApiService.GetConfig()
+			cfg.PollingEnabled = false
+			_ = a.remoteApiService.SetConfig(cfg)
+		}
+	}
+
+	// Start Remote HTTP API
+	cfg := a.remoteApiService.GetConfig()
+	if err := a.remoteApiService.Start(); err != nil {
+		fmt.Printf("[WARN] Could not bind Remote HTTP API: %v\n", err)
+	} else {
+		fmt.Printf("[INFO] Remote HTTP API : http://%s:%d\n", cfg.Host, cfg.Port)
+		fmt.Printf("[INFO] API Key         : %s\n", cfg.ApiKey)
+	}
+
+	// Start Polling Worker if configured
+	if cfg.PollingEnabled && strings.TrimSpace(cfg.PollingURL) != "" {
+		a.remoteApiService.StartPolling()
+		fmt.Printf("[INFO] Outbound Poller : ACTIVE (URL: %s, Interval: %ds)\n", cfg.PollingURL, cfg.PollingInterval)
+	} else {
+		fmt.Println("[INFO] Outbound Poller : INACTIVE (Enable via GUI or configure pollingUrl)")
+	}
+
+	// Start periodic memory optimizer
+	memory.StartPeriodicOptimization(45 * time.Second)
+
+	fmt.Println("------------------------------------------------------------------")
+	fmt.Println("[INFO] Service is now running in background. Press Ctrl+C to stop.")
+	fmt.Println("==================================================================")
+
+	// Block until OS interrupt signal
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+	<-sigChan
+
+	fmt.Println("\n[INFO] Termination signal received. Stopping OMP Desktop service...")
+	a.shutdown(context.Background())
+	fmt.Println("[INFO] Service stopped gracefully.")
+	return nil
 }
 // GetRemoteApiConfig returns current configuration for remote HTTP API
 func (a *App) GetRemoteApiConfig() remoteapi.RemoteApiConfig {

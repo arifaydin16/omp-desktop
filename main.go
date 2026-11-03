@@ -2,6 +2,8 @@ package main
 
 import (
 	"embed"
+	"os"
+	"strings"
 
 	"omp-desktop/backend/memory"
 
@@ -20,6 +22,14 @@ func main() {
 
 	// Create an instance of the app structure
 	app := NewApp()
+
+	if isServiceMode(os.Args) {
+		if err := app.RunHeadlessService(); err != nil {
+			println("Service Error:", err.Error())
+		}
+		return
+	}
+
 	// Create application with options
 	err := wails.Run(&options.App{
 		Title:     "oh-my-pi Desktop",
@@ -47,4 +57,17 @@ func main() {
 	if err != nil {
 		println("Error:", err.Error())
 	}
+}
+
+func isServiceMode(args []string) bool {
+	for _, arg := range args[1:] {
+		trimmed := strings.ToLower(strings.TrimSpace(arg))
+		if trimmed == "--service" || trimmed == "-s" ||
+			trimmed == "--headless" ||
+			trimmed == "--daemon" || trimmed == "-d" ||
+			trimmed == "--server" {
+			return true
+		}
+	}
+	return false
 }
