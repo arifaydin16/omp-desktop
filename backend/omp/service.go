@@ -808,7 +808,77 @@ func (s *Service) ExecuteAgentWithOutput(opts AgentRunOptions) (string, error) {
 						}
 						continue
 					}
-					// 3. Tool execution lifecycle events
+					// 3. Fallback message capture from message_end or turn_end
+					if fType == "message_end" || fType == "turn_end" {
+						if msgObj, ok := frame["message"].(map[string]interface{}); ok {
+							if role, _ := msgObj["role"].(string); role == "assistant" {
+								if contents, ok := msgObj["content"].([]interface{}); ok {
+									for _, c := range contents {
+										if cMap, ok := c.(map[string]interface{}); ok {
+											if cMap["type"] == "text" {
+												if txt, ok := cMap["text"].(string); ok && txt != "" {
+													outputMutex.Lock()
+													if assistantOutput.Len() == 0 {
+														assistantOutput.WriteString(txt)
+														postToolOutput.WriteString(txt)
+														if s.ctx != nil {
+															runtime.EventsEmit(s.ctx, "agent:stream", map[string]interface{}{
+																"type":       "text",
+																"content":    txt,
+																"instanceId": instID,
+															})
+														}
+													}
+													outputMutex.Unlock()
+												}
+											}
+										}
+									}
+								}
+							}
+						}
+						continue
+					}
+
+					// 4. Fallback message capture from agent_end
+					if fType == "agent_end" {
+						if msgs, ok := frame["messages"].([]interface{}); ok {
+							for i := len(msgs) - 1; i >= 0; i-- {
+								if mObj, ok := msgs[i].(map[string]interface{}); ok {
+									if role, _ := mObj["role"].(string); role == "assistant" {
+										if contents, ok := mObj["content"].([]interface{}); ok {
+											for _, c := range contents {
+												if cMap, ok := c.(map[string]interface{}); ok {
+													if cMap["type"] == "text" {
+														if txt, ok := cMap["text"].(string); ok && txt != "" {
+															outputMutex.Lock()
+															if assistantOutput.Len() == 0 {
+																assistantOutput.WriteString(txt)
+																postToolOutput.WriteString(txt)
+																if s.ctx != nil {
+																	runtime.EventsEmit(s.ctx, "agent:stream", map[string]interface{}{
+																		"type":       "text",
+																		"content":    txt,
+																		"instanceId": instID,
+																	})
+																}
+															}
+															outputMutex.Unlock()
+															break
+														}
+													}
+												}
+											}
+										}
+										break
+									}
+								}
+							}
+						}
+						continue
+					}
+
+					// 5. Tool execution lifecycle events
 					if fType == "tool_execution_start" {
 						outputMutex.Lock()
 						postToolOutput.Reset()
@@ -827,9 +897,6 @@ func (s *Service) ExecuteAgentWithOutput(opts AgentRunOptions) (string, error) {
 						continue
 					}
 					if fType == "tool_execution_end" {
-						outputMutex.Lock()
-						postToolOutput.Reset()
-						outputMutex.Unlock()
 						if s.ctx != nil {
 							frame["instanceId"] = instID
 							runtime.EventsEmit(s.ctx, "agent:tool_end", frame)
@@ -837,11 +904,10 @@ func (s *Service) ExecuteAgentWithOutput(opts AgentRunOptions) (string, error) {
 						continue
 					}
 
-					// 4. Fallback or tool result / metadata events: omit raw telemetry from stdout
+					// 6. Fallback or tool result / metadata events: omit raw telemetry from stdout
 					continue
 				}
 			}
-
 			// Route transient status to stderr
 			if trimmed == "Working..." || trimmed == "Working…" {
 				if s.ctx != nil {
@@ -894,24 +960,32 @@ func (s *Service) ExecuteAgentWithOutput(opts AgentRunOptions) (string, error) {
 		currentSessID = s.activeSessionID
 	}
 	s.mutex.Unlock()
+	outputMutex.Lock()
+	cleanPostTool := strings.TrimSpace(postToolOutput.String())
+	cleanAsst := strings.TrimSpace(assistantOutput.String())
+	var finalOut string
+	if cleanPostTool != "" {
+		finalOut = cleanPostTool
+	} else if cleanAsst != "" {
+		finalOut = cleanAsst
+	}
+	outputMutex.Unlock()
+
+	errMsg := ""
+	if err != nil {
+		errMsg = err.Error()
+	}
+
 	if s.ctx != nil {
 		runtime.EventsEmit(s.ctx, "agent:done", map[string]interface{}{
 			"exitCode":   exitCode,
 			"success":    err == nil,
 			"sessionId":  currentSessID,
 			"instanceId": instID,
+			"output":     finalOut,
+			"error":      errMsg,
 		})
 	}
-
-	outputMutex.Lock()
-	cleanPostTool := strings.TrimSpace(postToolOutput.String())
-	var finalOut string
-	if cleanPostTool != "" {
-		finalOut = cleanPostTool
-	} else {
-		finalOut = strings.TrimSpace(assistantOutput.String())
-	}
-	outputMutex.Unlock()
 
 	s.mutex.Lock()
 	hook := s.turnCompleteHook

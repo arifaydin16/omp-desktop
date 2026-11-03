@@ -180,18 +180,37 @@ function applyStreamToMessages(msgs: ChatMessage[], streamType: string, content:
   return copy;
 }
 
-function applyDoneToMessages(msgs: ChatMessage[], exitCode: number): ChatMessage[] {
+function applyDoneToMessages(msgs: ChatMessage[], exitCode: number, finalOutput?: string, runError?: string): ChatMessage[] {
   if (msgs.length === 0) return msgs;
   const copy = [...msgs];
   const last = copy[copy.length - 1];
   if (last.role === 'assistant') {
-    const split = splitThinkingAndResponse(last.text || '');
+    let textToUse = last.text || '';
+    if (!textToUse && finalOutput) {
+      textToUse = finalOutput;
+    }
+    if (!textToUse && exitCode !== 0 && runError) {
+      textToUse = `Hata (${exitCode}): ${runError}`;
+    }
+    const split = splitThinkingAndResponse(textToUse);
     const finalThinking = last.thinking || split.thinking || undefined;
-    const finalResponse = split.response || last.text || '';
+    const finalResponse = split.response || textToUse;
+
+    let blocks = [...(last.blocks || [])];
+    if (finalResponse && !blocks.some(b => b.type === 'text')) {
+      blocks.push({
+        id: 'blk_final_' + Date.now(),
+        type: 'text',
+        content: finalResponse,
+        timestamp: Date.now(),
+      });
+    }
+
     copy[copy.length - 1] = {
       ...last,
       text: finalResponse,
       thinking: finalThinking,
+      blocks,
       exitCode,
       workingStatus: undefined,
     };
@@ -687,6 +706,8 @@ export function App() {
         const targetId = (typeof obj.instanceId === 'string' && obj.instanceId) ? obj.instanceId : 'main';
         const exitCode = typeof obj.exitCode === 'number' ? obj.exitCode : 0;
         const sessId = typeof obj.sessionId === 'string' ? obj.sessionId : '';
+        const finalOutput = typeof obj.output === 'string' ? obj.output : '';
+        const runError = typeof obj.error === 'string' ? obj.error : '';
 
         setRunningInstances((prev) => prev.filter((id) => id !== targetId));
 
@@ -694,7 +715,7 @@ export function App() {
           ...s,
           isWorking: false,
           sessionId: sessId || s.sessionId,
-          messages: applyDoneToMessages(s.messages, exitCode),
+          messages: applyDoneToMessages(s.messages, exitCode, finalOutput, runError),
         }));
 
         setPanes((prev) =>
@@ -704,7 +725,7 @@ export function App() {
               ...pane,
               isWorking: false,
               sessionId: sessId || pane.sessionId,
-              messages: applyDoneToMessages(pane.messages, exitCode),
+              messages: applyDoneToMessages(pane.messages, exitCode, finalOutput, runError),
             };
           })
         );

@@ -3990,7 +3990,22 @@ export const AgentStudio: React.FC<AgentStudioProps> = ({
                     <div className="space-y-3">
                       {(() => {
                         const blocks = getMessageBlocks(msg, idx);
-                        if (!blocks || blocks.length === 0) return null;
+                        if (!blocks || blocks.length === 0) {
+                          if (isCurrentlyRunning) return null;
+                          if (msg.exitCode !== undefined && msg.exitCode !== 0) {
+                            return (
+                              <div className="text-red-400 font-mono text-xs py-1 flex items-center space-x-2">
+                                <span>⚠</span>
+                                <span>Ajan işlem hatası ile sonlandı (Exit Code: {msg.exitCode})</span>
+                              </div>
+                            );
+                          }
+                          return (
+                            <div className="text-zinc-400 font-sans text-xs py-1 italic">
+                              Ajan bu adımda bir yanıt metni üretmedi.
+                            </div>
+                          );
+                        }
                         return blocks.map((block) => {
                           if (block.type === 'thinking') {
                             const isCollapsed = collapsedThinking[block.id] ?? false;
