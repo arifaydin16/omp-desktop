@@ -602,6 +602,9 @@ func (s *Service) ExecuteAgentWithOutput(opts AgentRunOptions) (string, error) {
 			}
 		}
 	}
+	if modelToUse == "" {
+		modelToUse = "gemini-3.8-flash"
+	}
 	if modelToUse != "" {
 		args = append(args, "--model="+modelToUse)
 	}
@@ -700,6 +703,11 @@ func (s *Service) ExecuteAgentWithOutput(opts AgentRunOptions) (string, error) {
 	cmd := prepareCmd(exec.Command(s.ompBin, args...))
 	cmd.Dir = resolveValidWorkingDir(opts.Cwd)
 
+	// Ensure environment variables point to user's real home and profile so credentials and configs load
+	effectiveHome := ResolveEffectiveHomeDir()
+	cmdEnv := os.Environ()
+	cmdEnv = append(cmdEnv, "USERPROFILE="+effectiveHome, "HOME="+effectiveHome, "OMP_USER_HOME="+effectiveHome)
+	cmd.Env = cmdEnv
 	// Provide empty stdin with immediate EOF so omp does not hang waiting for piped stdin
 	cmd.Stdin = strings.NewReader("")
 
@@ -930,11 +938,22 @@ func (s *Service) ExecuteAgentWithOutput(opts AgentRunOptions) (string, error) {
 		}
 	}()
 
+	var stderrBuf strings.Builder
+	var stderrMutex sync.Mutex
+	var wgStderr sync.WaitGroup
+	wgStderr.Add(1)
+
 	// Read stderr line by line
 	go func() {
+		defer wgStderr.Done()
 		scanner := bufio.NewScanner(stderr)
 		for scanner.Scan() {
 			line := scanner.Text()
+			stderrMutex.Lock()
+			if stderrBuf.Len() < 16384 {
+				stderrBuf.WriteString(line + "\n")
+			}
+			stderrMutex.Unlock()
 			if s.ctx != nil {
 				runtime.EventsEmit(s.ctx, "agent:stream", map[string]interface{}{
 					"type":       "stderr",
@@ -946,10 +965,16 @@ func (s *Service) ExecuteAgentWithOutput(opts AgentRunOptions) (string, error) {
 	}()
 
 	err = cmd.Wait()
+	wgStderr.Wait()
+
 	exitCode := 0
 	if cmd.ProcessState != nil {
 		exitCode = cmd.ProcessState.ExitCode()
 	}
+
+	stderrMutex.Lock()
+	stderrCaptured := strings.TrimSpace(stderrBuf.String())
+	stderrMutex.Unlock()
 
 	s.mutex.Lock()
 	currentSessID := ""
@@ -972,8 +997,14 @@ func (s *Service) ExecuteAgentWithOutput(opts AgentRunOptions) (string, error) {
 	outputMutex.Unlock()
 
 	errMsg := ""
-	if err != nil {
+	if stderrCaptured != "" {
+		errMsg = stderrCaptured
+	} else if err != nil {
 		errMsg = err.Error()
+	}
+
+	if err != nil {
+		LogService("[AJAN HATASI (Exit %d) #%s] %s", exitCode, instID, errMsg)
 	}
 
 	if s.ctx != nil {
@@ -994,9 +1025,16 @@ func (s *Service) ExecuteAgentWithOutput(opts AgentRunOptions) (string, error) {
 		hook(instID, finalOut, err)
 	}
 
-	return finalOut, err
+	var retErr error
+	if err != nil {
+		if errMsg != "" {
+			retErr = fmt.Errorf("%s", errMsg)
+		} else {
+			retErr = err
+		}
+	}
+	return finalOut, retErr
 }
-
 // StopAgent terminates current running agent process
 func (s *Service) StopAgent() error {
 	return s.StopAgentInstance("main")

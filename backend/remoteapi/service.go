@@ -803,15 +803,17 @@ func (s *Service) executePolledTask(task *TicketTask) {
 	})
 	omp.LogService("[TASK #%v ÇALIŞTI] Çıktı uzunluğu: %d, Hata: %v", task.TaskID, len(agentOutput), runErr)
 
-	// If the agent turn errored out or stopped prematurely without output, auto-retry once with "devam et"
-	if runErr != nil || strings.TrimSpace(agentOutput) == "" {
+	// Only auto-retry with "devam et" if the turn completed without execution errors (runErr == nil)
+	// but produced empty output, AND an active session exists to resume.
+	// If the agent turn failed to launch or crashed (runErr != nil), retrying "devam et" would fail again and mask the real error.
+	activeSessID := s.ompService.GetActiveSessionIDInstance(targetInstID)
+	if runErr == nil && strings.TrimSpace(agentOutput) == "" && activeSessID != "" {
 		s.mu.Lock()
 		s.lastPollStatus = fmt.Sprintf("Ajan durdu (#%s). Otomatik 'devam et' ile devam ettiriliyor...", taskIDStr)
 		s.emitStatusLocked()
 		s.mu.Unlock()
 
 		time.Sleep(1500 * time.Millisecond)
-		activeSessID := s.ompService.GetActiveSessionIDInstance(targetInstID)
 
 		if s.wailsCtx != nil {
 			runtime.EventsEmit(s.wailsCtx, "remote_api:task_retry", map[string]interface{}{
