@@ -59,6 +59,8 @@ export function GetRemoteApiConfig():Promise<remoteapi.RemoteApiConfig>;
 
 export function GetRemoteApiStatus():Promise<remoteapi.RemoteApiStatus>;
 
+export function GetRunningInstances():Promise<Array<string>>;
+
 export function GetSessionDetail(arg1:string):Promise<omp.SessionDetail>;
 
 export function GetSessions(arg1:number):Promise<Array<omp.SessionSummary>>;
@@ -78,6 +80,8 @@ export function InstallPlugin(arg1:string):Promise<string>;
 export function InstallSkill(arg1:string):Promise<string>;
 
 export function InstallUpdate(arg1:boolean,arg2:boolean,arg3:boolean):Promise<string>;
+
+export function IsInstanceRunning(arg1:string):Promise<boolean>;
 
 export function LogoutProvider(arg1:string):Promise<void>;
 

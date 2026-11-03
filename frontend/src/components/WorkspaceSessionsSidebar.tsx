@@ -9,6 +9,7 @@ interface WorkspaceSessionsSidebarProps {
   currentCwd: string;
   onResumeSession: (session: SessionSummary) => void;
   onNewSession: () => void;
+  runningInstances?: string[];
 }
 
 interface WorkspaceGroup {
@@ -25,6 +26,7 @@ export const WorkspaceSessionsSidebar: React.FC<WorkspaceSessionsSidebarProps> =
   currentCwd,
   onResumeSession,
   onNewSession,
+  runningInstances = [],
 }) => {
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [loading, setLoading] = useState(false);
@@ -299,32 +301,43 @@ export const WorkspaceSessionsSidebar: React.FC<WorkspaceSessionsSidebarProps> =
                         Bu workspace altında oturum yok.
                       </div>
                     ) : (
-                      group.sessions.map((session) => (
-                        <div
-                          key={session.id}
-                          onClick={() => onResumeSession(session)}
-                          className="px-2.5 py-2 hover:bg-omp-surfaceLight/80 cursor-pointer transition group/item"
-                        >
-                          <div className="flex items-start justify-between gap-1.5 mb-1">
-                            <span className="font-medium text-xs text-white line-clamp-2 leading-snug group-hover/item:text-omp-accent transition">
-                              {session.title || 'Başlıksız Oturum'}
-                            </span>
-                          </div>
-
-                          <div className="flex items-center justify-between text-[10px] text-omp-muted font-mono">
-                            <div className="flex items-center space-x-2">
-                              <span>{formatSessionTime(session.updatedAt)}</span>
-                              <span>·</span>
-                              <span>{session.msgCount || 0} msg</span>
-                            </div>
-                            {session.model && (
-                              <span className="text-[9px] px-1 py-0.2 bg-omp-bg border border-omp-border rounded-[2px] text-omp-muted truncate max-w-[90px]">
-                                {session.model.split('/').pop()}
+                      group.sessions.map((session) => {
+                        const isRunning = runningInstances.some(
+                          (id) => id === session.id || id === 'sess_' + session.id
+                        );
+                        return (
+                          <div
+                            key={session.id}
+                            onClick={() => onResumeSession(session)}
+                            className="px-2.5 py-2 hover:bg-omp-surfaceLight/80 cursor-pointer transition group/item"
+                          >
+                            <div className="flex items-start justify-between gap-1.5 mb-1">
+                              <span className="font-medium text-xs text-white line-clamp-2 leading-snug group-hover/item:text-omp-accent transition">
+                                {session.title || 'Başlıksız Oturum'}
                               </span>
-                            )}
+                              {isRunning && (
+                                <span className="shrink-0 flex items-center space-x-1 px-1.5 py-0.5 rounded-[2px] bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 text-[9px] font-mono font-bold animate-pulse">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+                                  <span>Çalışıyor</span>
+                                </span>
+                              )}
+                            </div>
+
+                            <div className="flex items-center justify-between text-[10px] text-omp-muted font-mono">
+                              <div className="flex items-center space-x-2">
+                                <span>{formatSessionTime(session.updatedAt)}</span>
+                                <span>·</span>
+                                <span>{session.msgCount || 0} msg</span>
+                              </div>
+                              {session.model && (
+                                <span className="text-[9px] px-1 py-0.2 bg-omp-bg border border-omp-border rounded-[2px] text-omp-muted truncate max-w-[90px]">
+                                  {session.model.split('/').pop()}
+                                </span>
+                              )}
+                            </div>
                           </div>
-                        </div>
-                      ))
+                        );
+                      })
                     )}
                   </div>
                 )}

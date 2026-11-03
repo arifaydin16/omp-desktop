@@ -506,6 +506,9 @@ func (s *Service) ExecuteAgentWithOutput(opts AgentRunOptions) (string, error) {
 		}
 		s.mutex.Unlock()
 	}
+	if sessID == "" && strings.HasPrefix(instID, "sess_") {
+		sessID = strings.TrimPrefix(instID, "sess_")
+	}
 	if sessID != "" {
 		args = append(args, "--resume="+sessID)
 	}
@@ -780,6 +783,37 @@ func (s *Service) StopAgentInstance(instanceId string) error {
 		return s.activeCmd.Process.Kill()
 	}
 	return nil
+}
+
+// IsInstanceRunning checks if an instance process is currently active
+func (s *Service) IsInstanceRunning(instanceId string) bool {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+	id := strings.TrimSpace(instanceId)
+	if id == "" {
+		id = "main"
+	}
+	if cmd, exists := s.activeProcesses[id]; exists && cmd != nil && cmd.Process != nil {
+		return true
+	}
+	if s.activeCmd != nil && s.activeCmd.Process != nil && id == "main" {
+		return true
+	}
+	return false
+}
+
+// GetRunningInstances returns all currently active instance IDs
+func (s *Service) GetRunningInstances() []string {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+	var list []string
+	for id, cmd := range s.activeProcesses {
+		if cmd != nil && cmd.Process != nil {
+			list = append(list, id)
+		}
+	}
+	sort.Strings(list)
+	return list
 }
 
 // SendStdin writes to the default agent instance stdin

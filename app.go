@@ -161,6 +161,16 @@ func (a *App) StopAgentInstance(instanceId string) error {
 	return a.ompService.StopAgentInstance(instanceId)
 }
 
+// IsInstanceRunning checks if an agent process is currently active for this instance
+func (a *App) IsInstanceRunning(instanceId string) bool {
+	return a.ompService.IsInstanceRunning(instanceId)
+}
+
+// GetRunningInstances returns all active agent instance IDs
+func (a *App) GetRunningInstances() []string {
+	return a.ompService.GetRunningInstances()
+}
+
 // SendStdin writes input to agent stdin
 func (a *App) SendStdin(input string) error {
 	return a.ompService.SendStdin(input)

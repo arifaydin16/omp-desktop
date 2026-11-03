@@ -14,7 +14,8 @@ import * as AppApi from '../wailsjs/go/main/App';
 import { EventsOn } from '../wailsjs/runtime/runtime';
 
 export interface InstancePaneState {
-  id: string;
+  id: string; // Viewport ID: 'main', 'inst-2', etc.
+  instanceId: string; // Dynamic Session/Instance ID currently mapped to this pane
   title: string;
   cwd: string;
   messages: ChatMessage[];
@@ -27,14 +28,357 @@ export interface InstancePaneState {
   ticketId?: string;
 }
 
+export interface CachedSessionData {
+  instanceId: string;
+  sessionId: string;
+  title: string;
+  cwd: string;
+  messages: ChatMessage[];
+  attachedFiles: string[];
+  selectedModel: string;
+  isWorking: boolean;
+  fullSessionMessages?: ChatMessage[];
+  displayedMessageCount?: number;
+  ticketId?: string;
+}
+
 const DEFAULT_PANES: InstancePaneState[] = [
-  { id: 'main', title: 'OMP #1', cwd: '', messages: [], sessionId: '', attachedFiles: [], selectedModel: 'google-antigravity/gemini-3.8-flash', isWorking: false },
-  { id: 'inst-2', title: 'OMP #2', cwd: '', messages: [], sessionId: '', attachedFiles: [], selectedModel: 'google-antigravity/gemini-3.8-flash', isWorking: false },
-  { id: 'inst-3', title: 'OMP #3', cwd: '', messages: [], sessionId: '', attachedFiles: [], selectedModel: 'google-antigravity/gemini-3.8-flash', isWorking: false },
-  { id: 'inst-4', title: 'OMP #4', cwd: '', messages: [], sessionId: '', attachedFiles: [], selectedModel: 'google-antigravity/gemini-3.8-flash', isWorking: false },
-  { id: 'inst-5', title: 'OMP #5', cwd: '', messages: [], sessionId: '', attachedFiles: [], selectedModel: 'google-antigravity/gemini-3.8-flash', isWorking: false },
-  { id: 'inst-6', title: 'OMP #6', cwd: '', messages: [], sessionId: '', attachedFiles: [], selectedModel: 'google-antigravity/gemini-3.8-flash', isWorking: false },
+  { id: 'main', instanceId: 'main', title: 'OMP #1', cwd: '', messages: [], sessionId: '', attachedFiles: [], selectedModel: 'google-antigravity/gemini-3.8-flash', isWorking: false },
+  { id: 'inst-2', instanceId: 'inst-2', title: 'OMP #2', cwd: '', messages: [], sessionId: '', attachedFiles: [], selectedModel: 'google-antigravity/gemini-3.8-flash', isWorking: false },
+  { id: 'inst-3', instanceId: 'inst-3', title: 'OMP #3', cwd: '', messages: [], sessionId: '', attachedFiles: [], selectedModel: 'google-antigravity/gemini-3.8-flash', isWorking: false },
+  { id: 'inst-4', instanceId: 'inst-4', title: 'OMP #4', cwd: '', messages: [], sessionId: '', attachedFiles: [], selectedModel: 'google-antigravity/gemini-3.8-flash', isWorking: false },
+  { id: 'inst-5', instanceId: 'inst-5', title: 'OMP #5', cwd: '', messages: [], sessionId: '', attachedFiles: [], selectedModel: 'google-antigravity/gemini-3.8-flash', isWorking: false },
+  { id: 'inst-6', instanceId: 'inst-6', title: 'OMP #6', cwd: '', messages: [], sessionId: '', attachedFiles: [], selectedModel: 'google-antigravity/gemini-3.8-flash', isWorking: false },
 ];
+
+function applyStreamToMessages(msgs: ChatMessage[], streamType: string, content: string): ChatMessage[] {
+  if (msgs.length === 0) return msgs;
+  const copy = [...msgs];
+  const last = copy[copy.length - 1];
+  if (last.role !== 'assistant') return msgs;
+
+  const trimmed = content.trim();
+
+  if (
+    (streamType === 'stderr' && (trimmed.startsWith('Working') || trimmed.includes('Working...') || trimmed.includes('Still starting'))) ||
+    trimmed === 'Working...' || trimmed === 'Working…'
+  ) {
+    copy[copy.length - 1] = {
+      ...last,
+      workingStatus: trimmed,
+    };
+    return copy;
+  }
+
+  if (streamType === 'thinking') {
+    const currentBlocks = [...(last.blocks || [])];
+    const lastBlock = currentBlocks[currentBlocks.length - 1];
+    if (lastBlock && lastBlock.type === 'thinking') {
+      currentBlocks[currentBlocks.length - 1] = {
+        ...lastBlock,
+        content: lastBlock.content + content,
+      };
+    } else {
+      currentBlocks.push({
+        id: 'blk_th_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
+        type: 'thinking',
+        content,
+        timestamp: Date.now(),
+      });
+    }
+
+    copy[copy.length - 1] = {
+      ...last,
+      thinking: (last.thinking || '') + content,
+      blocks: currentBlocks,
+      workingStatus: undefined,
+    };
+    return copy;
+  }
+
+  if (streamType === 'text') {
+    const currentBlocks = [...(last.blocks || [])];
+    const lastBlock = currentBlocks[currentBlocks.length - 1];
+    if (lastBlock && lastBlock.type === 'text') {
+      currentBlocks[currentBlocks.length - 1] = {
+        ...lastBlock,
+        content: lastBlock.content + content,
+      };
+    } else {
+      currentBlocks.push({
+        id: 'blk_tx_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
+        type: 'text',
+        content,
+        timestamp: Date.now(),
+      });
+    }
+
+    copy[copy.length - 1] = {
+      ...last,
+      text: (last.text || '') + content,
+      blocks: currentBlocks,
+      workingStatus: undefined,
+    };
+    return copy;
+  }
+
+  const prevText = last.text || '';
+  let newText = prevText;
+  let newThinking = last.thinking;
+  const currentBlocks = [...(last.blocks || [])];
+
+  if (content.includes('Thinking Process:')) {
+    const parts = content.split('Thinking Process:');
+    newThinking = (newThinking || '') + parts[1];
+    newText = prevText + parts[0];
+    if (parts[0]) {
+      const lastB = currentBlocks[currentBlocks.length - 1];
+      if (lastB && lastB.type === 'text') {
+        currentBlocks[currentBlocks.length - 1] = { ...lastB, content: lastB.content + parts[0] };
+      } else {
+        currentBlocks.push({ id: 'blk_tx_' + Date.now(), type: 'text', content: parts[0], timestamp: Date.now() });
+      }
+    }
+    if (parts[1]) {
+      currentBlocks.push({ id: 'blk_th_' + Date.now(), type: 'thinking', content: parts[1], timestamp: Date.now() });
+    }
+  } else if (newThinking !== undefined && !content.includes('\n\n') && streamType === 'stdout') {
+    newThinking += content;
+    const lastB = currentBlocks[currentBlocks.length - 1];
+    if (lastB && lastB.type === 'thinking') {
+      currentBlocks[currentBlocks.length - 1] = { ...lastB, content: lastB.content + content };
+    } else {
+      currentBlocks.push({ id: 'blk_th_' + Date.now(), type: 'thinking', content, timestamp: Date.now() });
+    }
+  } else {
+    newText = prevText + content;
+    const lastB = currentBlocks[currentBlocks.length - 1];
+    if (lastB && lastB.type === 'text') {
+      currentBlocks[currentBlocks.length - 1] = { ...lastB, content: lastB.content + content };
+    } else {
+      currentBlocks.push({ id: 'blk_tx_' + Date.now(), type: 'text', content, timestamp: Date.now() });
+    }
+  }
+
+  copy[copy.length - 1] = {
+    ...last,
+    text: newText,
+    thinking: newThinking,
+    blocks: currentBlocks,
+    workingStatus: undefined,
+  };
+  return copy;
+}
+
+function applyDoneToMessages(msgs: ChatMessage[], exitCode: number): ChatMessage[] {
+  if (msgs.length === 0) return msgs;
+  const copy = [...msgs];
+  const last = copy[copy.length - 1];
+  if (last.role === 'assistant') {
+    const split = splitThinkingAndResponse(last.text || '');
+    const finalThinking = last.thinking || split.thinking || undefined;
+    const finalResponse = split.response || last.text || '';
+    copy[copy.length - 1] = {
+      ...last,
+      text: finalResponse,
+      thinking: finalThinking,
+      exitCode,
+      workingStatus: undefined,
+    };
+  }
+  return copy;
+}
+
+function applyToolStartToMessages(msgs: ChatMessage[], obj: Record<string, unknown>): ChatMessage[] {
+  if (msgs.length === 0) return msgs;
+  const copy = [...msgs];
+  const last = copy[copy.length - 1];
+  if (last.role !== 'assistant') return msgs;
+
+  const callId = String(obj.toolCallId || 'tc_' + Math.random().toString(36).slice(2));
+  const toolName = String(obj.toolName || 'tool');
+  const intent = typeof obj.intent === 'string' ? obj.intent : undefined;
+  const args = (obj.args as Record<string, unknown> | string) || undefined;
+
+  const currentCalls = last.toolCalls || [];
+  const existingIdx = currentCalls.findIndex((c) => c.id === callId);
+  const now = Date.now();
+  let updatedCalls: ToolCall[];
+  if (existingIdx >= 0) {
+    updatedCalls = [...currentCalls];
+    updatedCalls[existingIdx] = {
+      ...updatedCalls[existingIdx],
+      tool: toolName,
+      intent: intent || updatedCalls[existingIdx].intent,
+      args: args || updatedCalls[existingIdx].args,
+      status: 'running',
+      timestamp: updatedCalls[existingIdx].timestamp || now,
+    };
+  } else {
+    updatedCalls = [
+      ...currentCalls,
+      {
+        id: callId,
+        tool: toolName,
+        intent,
+        args,
+        status: 'running',
+        timestamp: now,
+      },
+    ];
+  }
+
+  const currentBlocks = [...(last.blocks || [])];
+  const blockIdx = currentBlocks.findIndex((b) => b.type === 'tool' && b.call.id === callId);
+  const activeCall: ToolCall = {
+    id: callId,
+    tool: toolName,
+    intent: intent || (existingIdx >= 0 ? updatedCalls[existingIdx].intent : undefined),
+    args: args || (existingIdx >= 0 ? updatedCalls[existingIdx].args : undefined),
+    status: 'running',
+    timestamp: existingIdx >= 0 && updatedCalls[existingIdx].timestamp ? updatedCalls[existingIdx].timestamp : now,
+  };
+  if (blockIdx >= 0) {
+    const prevB = currentBlocks[blockIdx];
+    if (prevB.type === 'tool') {
+      currentBlocks[blockIdx] = {
+        ...prevB,
+        call: activeCall,
+      };
+    }
+  } else {
+    currentBlocks.push({
+      id: 'blk_tl_' + callId,
+      type: 'tool',
+      call: activeCall,
+      timestamp: now,
+    });
+  }
+
+  copy[copy.length - 1] = {
+    ...last,
+    toolCalls: updatedCalls,
+    blocks: currentBlocks,
+  };
+  return copy;
+}
+
+function applyToolUpdateToMessages(msgs: ChatMessage[], obj: Record<string, unknown>): ChatMessage[] {
+  if (msgs.length === 0) return msgs;
+  const callId = String(obj.toolCallId || '');
+  if (!callId) return msgs;
+  const copy = [...msgs];
+  const last = copy[copy.length - 1];
+  if (last.role !== 'assistant' || !last.toolCalls) return msgs;
+
+  const partial = obj.partialResult as Record<string, unknown> | undefined;
+  let resultText = '';
+  if (partial && Array.isArray(partial.content)) {
+    for (const item of partial.content) {
+      if (item && typeof item === 'object' && 'text' in item) {
+        resultText += String(item.text || '');
+      }
+    }
+  }
+  const details = (partial?.details as Record<string, unknown>) || (obj.details as Record<string, unknown>) || undefined;
+
+  const updated = last.toolCalls.map((tc) => {
+    if (tc.id === callId) {
+      return {
+        ...tc,
+        result: resultText || tc.result,
+        details: details || tc.details,
+      };
+    }
+    return tc;
+  });
+  const currentBlocks = (last.blocks || []).map((b) => {
+    if (b.type === 'tool' && b.call.id === callId) {
+      return {
+        ...b,
+        call: {
+          ...b.call,
+          result: resultText || b.call.result,
+          details: details || b.call.details,
+        },
+      };
+    }
+    return b;
+  });
+  copy[copy.length - 1] = {
+    ...last,
+    toolCalls: updated,
+    blocks: currentBlocks,
+  };
+  return copy;
+}
+
+function applyToolEndToMessages(msgs: ChatMessage[], obj: Record<string, unknown>): ChatMessage[] {
+  if (msgs.length === 0) return msgs;
+  const callId = String(obj.toolCallId || '');
+  if (!callId) return msgs;
+  const copy = [...msgs];
+  const last = copy[copy.length - 1];
+  if (last.role !== 'assistant' || !last.toolCalls) return msgs;
+
+  const isError = Boolean(obj.isError);
+  const res = obj.result as Record<string, unknown> | undefined;
+  let resultText = '';
+  if (res && Array.isArray(res.content)) {
+    for (const item of res.content) {
+      if (item && typeof item === 'object' && 'text' in item) {
+        resultText += String(item.text || '');
+      }
+    }
+  }
+  const details = (res?.details as Record<string, unknown>) || (obj.details as Record<string, unknown>) || undefined;
+
+  const updated = last.toolCalls.map((tc) => {
+    if (tc.id === callId) {
+      return {
+        ...tc,
+        result: resultText || tc.result,
+        details: details || tc.details,
+        isError,
+        status: 'completed' as const,
+      };
+    }
+    return tc;
+  });
+
+  const currentBlocks = (last.blocks || []).map((b) => {
+    if (b.type === 'tool' && b.call.id === callId) {
+      return {
+        ...b,
+        call: {
+          ...b.call,
+          result: resultText || b.call.result,
+          details: details || b.call.details,
+          isError,
+          status: 'completed' as const,
+        },
+      };
+    }
+    return b;
+  });
+
+  copy[copy.length - 1] = {
+    ...last,
+    toolCalls: updated,
+    blocks: currentBlocks,
+  };
+  return copy;
+}
+
+function applyCommandToMessages(msgs: ChatMessage[], cmdStr: string): ChatMessage[] {
+  if (msgs.length === 0) return msgs;
+  const copy = [...msgs];
+  const last = copy[copy.length - 1];
+  if (last.role === 'assistant') {
+    copy[copy.length - 1] = { ...last, command: cmdStr };
+  }
+  return copy;
+}
 
 export function App() {
   const [binaryVersion, setBinaryVersion] = useState('');
@@ -59,6 +403,15 @@ export function App() {
   });
   const [activePaneId, setActivePaneId] = useState<string>('main');
   const [panes, setPanes] = useState<InstancePaneState[]>(DEFAULT_PANES);
+  const [runningInstances, setRunningInstances] = useState<string[]>([]);
+  const sessionStore = React.useRef<Map<string, CachedSessionData>>(new Map());
+
+  const updateSessionInStore = useCallback((instanceId: string, updater: (prev: CachedSessionData) => CachedSessionData) => {
+    const current = sessionStore.current.get(instanceId);
+    if (current) {
+      sessionStore.current.set(instanceId, updater(current));
+    }
+  }, []);
 
   // Synchronize dynamic theme to document element
   useEffect(() => {
@@ -169,8 +522,20 @@ export function App() {
         const obj = data as Record<string, unknown>;
         const targetId = (typeof obj.instanceId === 'string' && obj.instanceId) ? obj.instanceId : 'main';
         const running = obj.status === 'running';
+
+        setRunningInstances((prev) => {
+          const next = new Set(prev);
+          if (running) next.add(targetId);
+          else next.delete(targetId);
+          return Array.from(next);
+        });
+
+        updateSessionInStore(targetId, (s) => ({ ...s, isWorking: running }));
+
         setPanes((prev) =>
-          prev.map((p) => (p.id === targetId ? { ...p, isWorking: running } : p))
+          prev.map((p) =>
+            (p.instanceId === targetId || p.id === targetId) ? { ...p, isWorking: running } : p
+          )
         );
       }
     });
@@ -184,132 +549,22 @@ export function App() {
       if (typeof obj.content !== 'string') return;
 
       const trimmed = content.trim();
-
-      // Filter out any JSON strings that might leak
       if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
         return;
       }
 
+      updateSessionInStore(targetId, (s) => ({
+        ...s,
+        messages: applyStreamToMessages(s.messages, streamType, content),
+      }));
+
       setPanes((prev) =>
         prev.map((pane) => {
-          if (pane.id !== targetId || pane.messages.length === 0) return pane;
-          const msgs = [...pane.messages];
-          const last = msgs[msgs.length - 1];
-          if (last.role !== 'assistant') return pane;
-
-          // Transient working status
-          if (
-            (streamType === 'stderr' && (trimmed.startsWith('Working') || trimmed.includes('Working...') || trimmed.includes('Still starting'))) ||
-            trimmed === 'Working...' || trimmed === 'Working…'
-          ) {
-            msgs[msgs.length - 1] = {
-              ...last,
-              workingStatus: trimmed,
-            };
-            return { ...pane, messages: msgs };
-          }
-
-          // Direct typed thinking delta
-          if (streamType === 'thinking') {
-            const currentBlocks = [...(last.blocks || [])];
-            const lastBlock = currentBlocks[currentBlocks.length - 1];
-            if (lastBlock && lastBlock.type === 'thinking') {
-              currentBlocks[currentBlocks.length - 1] = {
-                ...lastBlock,
-                content: lastBlock.content + content,
-              };
-            } else {
-              currentBlocks.push({
-                id: 'blk_th_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
-                type: 'thinking',
-                content,
-                timestamp: Date.now(),
-              });
-            }
-
-            msgs[msgs.length - 1] = {
-              ...last,
-              thinking: (last.thinking || '') + content,
-              blocks: currentBlocks,
-              workingStatus: undefined,
-            };
-            return { ...pane, messages: msgs };
-          }
-
-          // Direct typed text delta
-          if (streamType === 'text') {
-            const currentBlocks = [...(last.blocks || [])];
-            const lastBlock = currentBlocks[currentBlocks.length - 1];
-            if (lastBlock && lastBlock.type === 'text') {
-              currentBlocks[currentBlocks.length - 1] = {
-                ...lastBlock,
-                content: lastBlock.content + content,
-              };
-            } else {
-              currentBlocks.push({
-                id: 'blk_tx_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
-                type: 'text',
-                content,
-                timestamp: Date.now(),
-              });
-            }
-
-            msgs[msgs.length - 1] = {
-              ...last,
-              text: (last.text || '') + content,
-              blocks: currentBlocks,
-              workingStatus: undefined,
-            };
-            return { ...pane, messages: msgs };
-          }
-
-          // Mixed stdout/stderr fallback
-          const prevText = last.text || '';
-          let newText = prevText;
-          let newThinking = last.thinking;
-          const currentBlocks = [...(last.blocks || [])];
-
-          if (content.includes('Thinking Process:')) {
-            const parts = content.split('Thinking Process:');
-            newThinking = (newThinking || '') + parts[1];
-            newText = prevText + parts[0];
-            if (parts[0]) {
-              const lastB = currentBlocks[currentBlocks.length - 1];
-              if (lastB && lastB.type === 'text') {
-                currentBlocks[currentBlocks.length - 1] = { ...lastB, content: lastB.content + parts[0] };
-              } else {
-                currentBlocks.push({ id: 'blk_tx_' + Date.now(), type: 'text', content: parts[0], timestamp: Date.now() });
-              }
-            }
-            if (parts[1]) {
-              currentBlocks.push({ id: 'blk_th_' + Date.now(), type: 'thinking', content: parts[1], timestamp: Date.now() });
-            }
-          } else if (newThinking !== undefined && !content.includes('\n\n') && streamType === 'stdout') {
-            newThinking += content;
-            const lastB = currentBlocks[currentBlocks.length - 1];
-            if (lastB && lastB.type === 'thinking') {
-              currentBlocks[currentBlocks.length - 1] = { ...lastB, content: lastB.content + content };
-            } else {
-              currentBlocks.push({ id: 'blk_th_' + Date.now(), type: 'thinking', content, timestamp: Date.now() });
-            }
-          } else {
-            newText = prevText + content;
-            const lastB = currentBlocks[currentBlocks.length - 1];
-            if (lastB && lastB.type === 'text') {
-              currentBlocks[currentBlocks.length - 1] = { ...lastB, content: lastB.content + content };
-            } else {
-              currentBlocks.push({ id: 'blk_tx_' + Date.now(), type: 'text', content, timestamp: Date.now() });
-            }
-          }
-
-          msgs[msgs.length - 1] = {
-            ...last,
-            text: newText,
-            thinking: newThinking,
-            blocks: currentBlocks,
-            workingStatus: undefined,
+          if (pane.instanceId !== targetId && pane.id !== targetId) return pane;
+          return {
+            ...pane,
+            messages: applyStreamToMessages(pane.messages, streamType, content),
           };
-          return { ...pane, messages: msgs };
         })
       );
     });
@@ -319,16 +574,17 @@ export function App() {
         const obj = data as Record<string, unknown>;
         const targetId = (typeof obj.instanceId === 'string' && obj.instanceId) ? obj.instanceId : 'main';
         const cmdStr = typeof obj.command === 'string' ? obj.command : '';
+        updateSessionInStore(targetId, (s) => ({
+          ...s,
+          messages: applyCommandToMessages(s.messages, cmdStr),
+        }));
         setPanes((prev) =>
           prev.map((pane) => {
-            if (pane.id !== targetId || pane.messages.length === 0) return pane;
-            const msgs = [...pane.messages];
-            const last = msgs[msgs.length - 1];
-            if (last.role === 'assistant') {
-              msgs[msgs.length - 1] = { ...last, command: cmdStr };
-              return { ...pane, messages: msgs };
-            }
-            return pane;
+            if (pane.instanceId !== targetId && pane.id !== targetId) return pane;
+            return {
+              ...pane,
+              messages: applyCommandToMessages(pane.messages, cmdStr),
+            };
           })
         );
       }
@@ -338,9 +594,13 @@ export function App() {
       if (data && typeof data === 'object') {
         const obj = data as Record<string, unknown>;
         const targetId = (typeof obj.instanceId === 'string' && obj.instanceId) ? obj.instanceId : 'main';
-        if (typeof obj.sessionId === 'string' && obj.sessionId) {
+        const sessId = typeof obj.sessionId === 'string' ? obj.sessionId : '';
+        if (sessId) {
+          updateSessionInStore(targetId, (s) => ({ ...s, sessionId: sessId }));
           setPanes((prev) =>
-            prev.map((p) => (p.id === targetId ? { ...p, sessionId: obj.sessionId as string } : p))
+            prev.map((p) =>
+              (p.instanceId === targetId || p.id === targetId) ? { ...p, sessionId: sessId } : p
+            )
           );
         }
       }
@@ -350,81 +610,17 @@ export function App() {
       if (!data || typeof data !== 'object') return;
       const obj = data as Record<string, unknown>;
       const targetId = (typeof obj.instanceId === 'string' && obj.instanceId) ? obj.instanceId : 'main';
-      const callId = String(obj.toolCallId || 'tc_' + Math.random().toString(36).slice(2));
-      const toolName = String(obj.toolName || 'tool');
-      const intent = typeof obj.intent === 'string' ? obj.intent : undefined;
-      const args = (obj.args as Record<string, unknown> | string) || undefined;
-
+      updateSessionInStore(targetId, (s) => ({
+        ...s,
+        messages: applyToolStartToMessages(s.messages, obj),
+      }));
       setPanes((prev) =>
         prev.map((pane) => {
-          if (pane.id !== targetId || pane.messages.length === 0) return pane;
-          const msgs = [...pane.messages];
-          const last = msgs[msgs.length - 1];
-          if (last.role === 'assistant') {
-            const currentCalls = last.toolCalls || [];
-            const existingIdx = currentCalls.findIndex((c) => c.id === callId);
-            const now = Date.now();
-            let updatedCalls: ToolCall[];
-            if (existingIdx >= 0) {
-              updatedCalls = [...currentCalls];
-              updatedCalls[existingIdx] = {
-                ...updatedCalls[existingIdx],
-                tool: toolName,
-                intent: intent || updatedCalls[existingIdx].intent,
-                args: args || updatedCalls[existingIdx].args,
-                status: 'running',
-                timestamp: updatedCalls[existingIdx].timestamp || now,
-              };
-            } else {
-              updatedCalls = [
-                ...currentCalls,
-                {
-                  id: callId,
-                  tool: toolName,
-                  intent,
-                  args,
-                  status: 'running',
-                  timestamp: now,
-                },
-              ];
-            }
-
-            // Maintain chronological blocks
-            const currentBlocks = [...(last.blocks || [])];
-            const blockIdx = currentBlocks.findIndex((b) => b.type === 'tool' && b.call.id === callId);
-            const activeCall: ToolCall = {
-              id: callId,
-              tool: toolName,
-              intent: intent || (existingIdx >= 0 ? updatedCalls[existingIdx].intent : undefined),
-              args: args || (existingIdx >= 0 ? updatedCalls[existingIdx].args : undefined),
-              status: 'running',
-              timestamp: existingIdx >= 0 && updatedCalls[existingIdx].timestamp ? updatedCalls[existingIdx].timestamp : now,
-            };
-            if (blockIdx >= 0) {
-              const prevB = currentBlocks[blockIdx];
-              if (prevB.type === 'tool') {
-                currentBlocks[blockIdx] = {
-                  ...prevB,
-                  call: activeCall,
-                };
-              }
-            } else {
-              currentBlocks.push({
-                id: 'blk_tl_' + callId,
-                type: 'tool',
-                call: activeCall,
-                timestamp: now,
-              });
-            }
-
-            msgs[msgs.length - 1] = {
-              ...last,
-              toolCalls: updatedCalls,
-              blocks: currentBlocks,
-            };
-            return { ...pane, messages: msgs };
-          }
-          return pane;
+          if (pane.instanceId !== targetId && pane.id !== targetId) return pane;
+          return {
+            ...pane,
+            messages: applyToolStartToMessages(pane.messages, obj),
+          };
         })
       );
     });
@@ -433,57 +629,17 @@ export function App() {
       if (!data || typeof data !== 'object') return;
       const obj = data as Record<string, unknown>;
       const targetId = (typeof obj.instanceId === 'string' && obj.instanceId) ? obj.instanceId : 'main';
-      const callId = String(obj.toolCallId || '');
-      if (!callId) return;
-
-      const partial = obj.partialResult as Record<string, unknown> | undefined;
-      let resultText = '';
-      if (partial && Array.isArray(partial.content)) {
-        for (const item of partial.content) {
-          if (item && typeof item === 'object' && 'text' in item) {
-            resultText += String(item.text || '');
-          }
-        }
-      }
-      const details = (partial?.details as Record<string, unknown>) || (obj.details as Record<string, unknown>) || undefined;
-
+      updateSessionInStore(targetId, (s) => ({
+        ...s,
+        messages: applyToolUpdateToMessages(s.messages, obj),
+      }));
       setPanes((prev) =>
         prev.map((pane) => {
-          if (pane.id !== targetId || pane.messages.length === 0) return pane;
-          const msgs = [...pane.messages];
-          const last = msgs[msgs.length - 1];
-          if (last.role === 'assistant' && last.toolCalls) {
-            const updated = last.toolCalls.map((tc) => {
-              if (tc.id === callId) {
-                return {
-                  ...tc,
-                  result: resultText || tc.result,
-                  details: details || tc.details,
-                };
-              }
-              return tc;
-            });
-            const currentBlocks = (last.blocks || []).map((b) => {
-              if (b.type === 'tool' && b.call.id === callId) {
-                return {
-                  ...b,
-                  call: {
-                    ...b.call,
-                    result: resultText || b.call.result,
-                    details: details || b.call.details,
-                  },
-                };
-              }
-              return b;
-            });
-            msgs[msgs.length - 1] = {
-              ...last,
-              toolCalls: updated,
-              blocks: currentBlocks,
-            };
-            return { ...pane, messages: msgs };
-          }
-          return pane;
+          if (pane.instanceId !== targetId && pane.id !== targetId) return pane;
+          return {
+            ...pane,
+            messages: applyToolUpdateToMessages(pane.messages, obj),
+          };
         })
       );
     });
@@ -492,62 +648,17 @@ export function App() {
       if (!data || typeof data !== 'object') return;
       const obj = data as Record<string, unknown>;
       const targetId = (typeof obj.instanceId === 'string' && obj.instanceId) ? obj.instanceId : 'main';
-      const callId = String(obj.toolCallId || '');
-      if (!callId) return;
-
-      const isError = Boolean(obj.isError);
-      const res = obj.result as Record<string, unknown> | undefined;
-      let resultText = '';
-      if (res && Array.isArray(res.content)) {
-        for (const item of res.content) {
-          if (item && typeof item === 'object' && 'text' in item) {
-            resultText += String(item.text || '');
-          }
-        }
-      }
-      const details = (res?.details as Record<string, unknown>) || (obj.details as Record<string, unknown>) || undefined;
-
+      updateSessionInStore(targetId, (s) => ({
+        ...s,
+        messages: applyToolEndToMessages(s.messages, obj),
+      }));
       setPanes((prev) =>
         prev.map((pane) => {
-          if (pane.id !== targetId || pane.messages.length === 0) return pane;
-          const msgs = [...pane.messages];
-          const last = msgs[msgs.length - 1];
-          if (last.role === 'assistant' && last.toolCalls) {
-            const updated = last.toolCalls.map((tc) => {
-              if (tc.id === callId) {
-                return {
-                  ...tc,
-                  result: resultText || tc.result,
-                  details: details || tc.details,
-                  isError,
-                  status: 'completed' as const,
-                };
-              }
-              return tc;
-            });
-            const currentBlocks = (last.blocks || []).map((b) => {
-              if (b.type === 'tool' && b.call.id === callId) {
-                return {
-                  ...b,
-                  call: {
-                    ...b.call,
-                    result: resultText || b.call.result,
-                    details: details || b.call.details,
-                    isError,
-                    status: 'completed' as const,
-                  },
-                };
-              }
-              return b;
-            });
-            msgs[msgs.length - 1] = {
-              ...last,
-              toolCalls: updated,
-              blocks: currentBlocks,
-            };
-            return { ...pane, messages: msgs };
-          }
-          return pane;
+          if (pane.instanceId !== targetId && pane.id !== targetId) return pane;
+          return {
+            ...pane,
+            messages: applyToolEndToMessages(pane.messages, obj),
+          };
         })
       );
     });
@@ -559,30 +670,23 @@ export function App() {
         const exitCode = typeof obj.exitCode === 'number' ? obj.exitCode : 0;
         const sessId = typeof obj.sessionId === 'string' ? obj.sessionId : '';
 
+        setRunningInstances((prev) => prev.filter((id) => id !== targetId));
+
+        updateSessionInStore(targetId, (s) => ({
+          ...s,
+          isWorking: false,
+          sessionId: sessId || s.sessionId,
+          messages: applyDoneToMessages(s.messages, exitCode),
+        }));
+
         setPanes((prev) =>
           prev.map((pane) => {
-            if (pane.id !== targetId) return pane;
-            const msgs = [...pane.messages];
-            if (msgs.length > 0) {
-              const last = msgs[msgs.length - 1];
-              if (last.role === 'assistant') {
-                const split = splitThinkingAndResponse(last.text || '');
-                const finalThinking = last.thinking || split.thinking || undefined;
-                const finalResponse = split.response || last.text || '';
-                msgs[msgs.length - 1] = {
-                  ...last,
-                  text: finalResponse,
-                  thinking: finalThinking,
-                  exitCode,
-                  workingStatus: undefined,
-                };
-              }
-            }
+            if (pane.instanceId !== targetId && pane.id !== targetId) return pane;
             return {
               ...pane,
               isWorking: false,
               sessionId: sessId || pane.sessionId,
-              messages: msgs,
+              messages: applyDoneToMessages(pane.messages, exitCode),
             };
           })
         );
@@ -627,10 +731,24 @@ export function App() {
         blocks: [],
         workingStatus: ticketId ? `Ticket #${ticketId} devralındı, çalışıyor...` : 'Görev devralındı, çalışıyor...',
       };
+      setRunningInstances((prev) => {
+        const next = new Set(prev);
+        next.add(targetId);
+        return Array.from(next);
+      });
+
+      updateSessionInStore(targetId, (s) => ({
+        ...s,
+        title: titlePrefix,
+        cwd: taskCwd || s.cwd,
+        ticketId: ticketId || s.ticketId,
+        messages: [...s.messages, userMsg, assistantMsg],
+        isWorking: true,
+      }));
 
       setPanes((prev) =>
         prev.map((p) => {
-          if (p.id !== targetId) return p;
+          if (p.id !== targetId && p.instanceId !== targetId) return p;
           return {
             ...p,
             cwd: taskCwd || p.cwd,
@@ -771,6 +889,11 @@ export function App() {
 
   // Execution per pane
   const handleSendMessage = async (opts: AgentRunOptions, paneId: string = 'main') => {
+    const currentPane = panes.find((p) => p.id === paneId);
+    const targetInstId = currentPane?.instanceId || paneId;
+    const targetSessionId = opts.sessionId || currentPane?.sessionId || '';
+    const targetCwd = opts.cwd || currentPane?.cwd || cwd;
+
     const userMsg: ChatMessage = {
       id: 'usr_' + Date.now(),
       role: 'user',
@@ -788,17 +911,31 @@ export function App() {
       blocks: [],
     };
 
-    const currentPane = panes.find((p) => p.id === paneId);
-    const targetCwd = opts.cwd || currentPane?.cwd || cwd;
+    updateSessionInStore(targetInstId, (s) => ({
+      ...s,
+      messages: [...s.messages, userMsg, assistantMsgPlaceholder],
+      attachedFiles: [],
+      isWorking: true,
+      cwd: targetCwd,
+      sessionId: targetSessionId || s.sessionId,
+    }));
+
+    setRunningInstances((prev) => {
+      const next = new Set(prev);
+      next.add(targetInstId);
+      return Array.from(next);
+    });
 
     setPanes((prev) =>
       prev.map((p) => {
-        if (p.id !== paneId) return p;
+        if (p.id !== paneId && p.instanceId !== targetInstId) return p;
         return {
           ...p,
           messages: [...p.messages, userMsg, assistantMsgPlaceholder],
           attachedFiles: [],
           isWorking: true,
+          cwd: targetCwd,
+          sessionId: targetSessionId || p.sessionId,
         };
       })
     );
@@ -806,56 +943,70 @@ export function App() {
     try {
       await AppApi.ExecuteAgent({
         ...opts,
-        instanceId: paneId,
+        instanceId: targetInstId,
+        sessionId: targetSessionId,
         cwd: targetCwd,
       });
     } catch (err: unknown) {
       console.error('ExecuteAgent err:', err);
+      const errMsg: ChatMessage = {
+        id: 'err_' + Date.now(),
+        role: 'system',
+        text: 'Hata: ' + String(err),
+        timestamp: new Date().toISOString(),
+      };
+      updateSessionInStore(targetInstId, (s) => ({
+        ...s,
+        messages: [...s.messages, errMsg],
+        isWorking: false,
+      }));
       setPanes((prev) =>
         prev.map((p) => {
-          if (p.id !== paneId) return p;
+          if (p.id !== paneId && p.instanceId !== targetInstId) return p;
           return {
             ...p,
-            messages: [
-              ...p.messages,
-              {
-                id: 'err_' + Date.now(),
-                role: 'system',
-                text: 'Hata: ' + String(err),
-                timestamp: new Date().toISOString(),
-              },
-            ],
+            messages: [...p.messages, errMsg],
             isWorking: false,
           };
         })
       );
+      setRunningInstances((prev) => prev.filter((id) => id !== targetInstId));
     }
   };
 
   const handleStopAgent = async (paneId: string = 'main') => {
+    const currentPane = panes.find((p) => p.id === paneId);
+    const targetInstId = currentPane?.instanceId || paneId;
     try {
-      await AppApi.StopAgentInstance(paneId);
+      await AppApi.StopAgentInstance(targetInstId);
+      updateSessionInStore(targetInstId, (s) => ({ ...s, isWorking: false }));
       setPanes((prev) =>
-        prev.map((p) => (p.id === paneId ? { ...p, isWorking: false } : p))
+        prev.map((p) => (p.id === paneId || p.instanceId === targetInstId ? { ...p, isWorking: false } : p))
       );
+      setRunningInstances((prev) => prev.filter((id) => id !== targetInstId));
     } catch (err: unknown) {
       console.error('StopAgent err:', err);
     }
   };
 
   const handleSendStdin = async (input: string, paneId: string = 'main') => {
+    const currentPane = panes.find((p) => p.id === paneId);
+    const targetInstId = currentPane?.instanceId || paneId;
     try {
-      await AppApi.SendStdinInstance(paneId, input);
+      await AppApi.SendStdinInstance(targetInstId, input);
     } catch (err: unknown) {
       console.error('SendStdin err:', err);
     }
   };
 
   const handleClearPaneConsole = (paneId: string) => {
+    const currentPane = panes.find((p) => p.id === paneId);
+    const targetInstId = currentPane?.instanceId || paneId;
+    updateSessionInStore(targetInstId, (s) => ({ ...s, messages: [], sessionId: '' }));
     setPanes((prev) =>
       prev.map((p) => (p.id === paneId ? { ...p, messages: [], sessionId: '' } : p))
     );
-    AppApi.ClearActiveSessionInstance(paneId).catch(() => {});
+    AppApi.ClearActiveSessionInstance(targetInstId).catch(() => {});
   };
 
   const handleSelectPaneModel = (paneId: string, model: string) => {
@@ -887,76 +1038,203 @@ export function App() {
   };
 
   const handleResumeSession = async (session: SessionSummary) => {
-    const targetId = activePaneId || 'main';
+    const targetPaneId = activePaneId || 'main';
+    const currentPane = panes.find((p) => p.id === targetPaneId);
+
+    const targetInstId = 'sess_' + session.id;
+
+    // If already showing this session in this pane, just update cwd/model if needed and return
+    if (currentPane && (currentPane.instanceId === targetInstId || (currentPane.sessionId === session.id && session.id !== ''))) {
+      if (session.cwd) setCwd(session.cwd);
+      if (session.model) setSelectedModel(session.model);
+      return;
+    }
+
+    // 1. Save state of current session in this pane before switching away
+    if (currentPane) {
+      const prevInstId = currentPane.instanceId || currentPane.id;
+      sessionStore.current.set(prevInstId, {
+        instanceId: prevInstId,
+        sessionId: currentPane.sessionId,
+        title: currentPane.title,
+        cwd: currentPane.cwd,
+        messages: currentPane.messages,
+        attachedFiles: currentPane.attachedFiles,
+        selectedModel: currentPane.selectedModel,
+        isWorking: currentPane.isWorking,
+        fullSessionMessages: currentPane.fullSessionMessages,
+        displayedMessageCount: currentPane.displayedMessageCount,
+        ticketId: currentPane.ticketId,
+      });
+
+      // If previous session is idle (prompt can be typed), close its backend instance
+      if (!currentPane.isWorking) {
+        AppApi.StopAgentInstance(prevInstId).catch(() => {});
+      }
+    }
+
     if (session.cwd) {
       setCwd(session.cwd);
-    }
-    setPanes((prev) =>
-      prev.map((p) =>
-        p.id === targetId
-          ? {
-              ...p,
-              cwd: session.cwd || p.cwd || cwd,
-              sessionId: session.id || '',
-              selectedModel: session.model || p.selectedModel || selectedModel,
-            }
-          : p
-      )
-    );
-    if (session.id) {
-      AppApi.SetActiveSessionIDInstance(targetId, session.id).catch(() => {});
     }
     if (session.model) {
       setSelectedModel(session.model);
     }
 
+    // 2. Check if target session is already in memory store (e.g. running in background or previously visited)
+    const existing = sessionStore.current.get(targetInstId);
+    if (existing) {
+      setPanes((prev) =>
+        prev.map((p) =>
+          p.id === targetPaneId
+            ? {
+                ...p,
+                instanceId: existing.instanceId,
+                sessionId: existing.sessionId || session.id,
+                title: existing.title || session.title || 'Oturum',
+                cwd: existing.cwd || session.cwd || cwd,
+                messages: existing.messages,
+                attachedFiles: existing.attachedFiles || [],
+                selectedModel: existing.selectedModel || session.model || selectedModel,
+                isWorking: existing.isWorking,
+                fullSessionMessages: existing.fullSessionMessages,
+                displayedMessageCount: existing.displayedMessageCount,
+                ticketId: existing.ticketId,
+              }
+            : p
+        )
+      );
+      AppApi.SetActiveSessionIDInstance(targetInstId, session.id).catch(() => {});
+      return;
+    }
+
+    // 3. Not in memory: load transcript from disk
+    let initialMessages: ChatMessage[] = [];
+    let parsedMsgs: ChatMessage[] = [];
+    let initialCount = 0;
+
     try {
       const detail = await AppApi.GetSessionDetail(session.path);
       if (detail && detail.messages && detail.messages.length > 0) {
-        const parsedMsgs = parseSessionTranscript(detail.messages);
+        parsedMsgs = parseSessionTranscript(detail.messages);
         if (parsedMsgs.length > 0) {
           const PAGE_SIZE = 25;
           const total = parsedMsgs.length;
-          const initialCount = Math.min(PAGE_SIZE, total);
-          const initialMessages = parsedMsgs.slice(total - initialCount);
-
-          setPanes((prev) =>
-            prev.map((p) =>
-              p.id === targetId
-                ? {
-                    ...p,
-                    messages: initialMessages,
-                    fullSessionMessages: parsedMsgs,
-                    displayedMessageCount: initialCount,
-                  }
-                : p
-            )
-          );
-          return;
+          initialCount = Math.min(PAGE_SIZE, total);
+          initialMessages = parsedMsgs.slice(total - initialCount);
         }
       }
     } catch (e) {
       console.warn('Could not load session transcript messages:', e);
     }
 
-    // Fallback if empty or parsing failed
+    if (initialMessages.length === 0) {
+      initialMessages = [
+        {
+          id: 'sys_' + Date.now(),
+          role: 'system',
+          text: `Oturum yüklendi: ${session.title || session.id} (${session.id})`,
+          timestamp: new Date().toISOString(),
+        },
+      ];
+    }
+
+    const newCachedData: CachedSessionData = {
+      instanceId: targetInstId,
+      sessionId: session.id,
+      title: session.title || 'Oturum',
+      cwd: session.cwd || cwd,
+      messages: initialMessages,
+      attachedFiles: [],
+      selectedModel: session.model || selectedModel,
+      isWorking: false,
+      fullSessionMessages: parsedMsgs,
+      displayedMessageCount: initialCount,
+    };
+    sessionStore.current.set(targetInstId, newCachedData);
+
     setPanes((prev) =>
       prev.map((p) =>
-        p.id === targetId
+        p.id === targetPaneId
           ? {
               ...p,
-              messages: [
-                {
-                  id: 'sys_' + Date.now(),
-                  role: 'system',
-                  text: `Oturum yüklendi: ${session.title} (${session.id})`,
-                  timestamp: new Date().toISOString(),
-                },
-              ],
+              instanceId: targetInstId,
+              sessionId: session.id,
+              title: session.title || p.title,
+              cwd: session.cwd || p.cwd || cwd,
+              messages: initialMessages,
+              attachedFiles: [],
+              selectedModel: session.model || p.selectedModel || selectedModel,
+              isWorking: false,
+              fullSessionMessages: parsedMsgs,
+              displayedMessageCount: initialCount,
             }
           : p
       )
     );
+
+    AppApi.SetActiveSessionIDInstance(targetInstId, session.id).catch(() => {});
+  };
+
+  const handleNewSession = () => {
+    const targetPaneId = activePaneId || 'main';
+    const currentPane = panes.find((p) => p.id === targetPaneId);
+
+    // Save state of current session before switching away
+    if (currentPane) {
+      const prevInstId = currentPane.instanceId || currentPane.id;
+      sessionStore.current.set(prevInstId, {
+        instanceId: prevInstId,
+        sessionId: currentPane.sessionId,
+        title: currentPane.title,
+        cwd: currentPane.cwd,
+        messages: currentPane.messages,
+        attachedFiles: currentPane.attachedFiles,
+        selectedModel: currentPane.selectedModel,
+        isWorking: currentPane.isWorking,
+        fullSessionMessages: currentPane.fullSessionMessages,
+        displayedMessageCount: currentPane.displayedMessageCount,
+        ticketId: currentPane.ticketId,
+      });
+
+      // Close idle instance if not working
+      if (!currentPane.isWorking) {
+        AppApi.StopAgentInstance(prevInstId).catch(() => {});
+      }
+    }
+
+    const newInstId = 'inst_new_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
+    const newSessionData: CachedSessionData = {
+      instanceId: newInstId,
+      sessionId: '',
+      title: 'Yeni Oturum',
+      cwd: cwd,
+      messages: [],
+      attachedFiles: [],
+      selectedModel: selectedModel,
+      isWorking: false,
+      fullSessionMessages: [],
+      displayedMessageCount: 0,
+    };
+    sessionStore.current.set(newInstId, newSessionData);
+
+    setPanes((prev) =>
+      prev.map((p) =>
+        p.id === targetPaneId
+          ? {
+              ...p,
+              instanceId: newInstId,
+              title: 'Yeni Oturum',
+              messages: [],
+              attachedFiles: [],
+              sessionId: '',
+              fullSessionMessages: [],
+              displayedMessageCount: 0,
+              isWorking: false,
+            }
+          : p
+      )
+    );
+    AppApi.ClearActiveSessionInstance(newInstId).catch(() => {});
   };
   const handleLoadOlderMessages = useCallback((paneId: string) => {
     setPanes((prev) =>
@@ -980,17 +1258,7 @@ export function App() {
     );
   }, []);
 
-  const handleNewSession = () => {
-    const targetId = activePaneId || 'main';
-    setPanes((prev) =>
-      prev.map((p) =>
-        p.id === targetId
-          ? { ...p, messages: [], attachedFiles: [], sessionId: '', fullSessionMessages: [], displayedMessageCount: 0 }
-          : p
-      )
-    );
-    AppApi.ClearActiveSessionInstance(targetId).catch(() => {});
-  };
+  // Handled in handleNewSession above
 
   const handleToggleDrawer = (drawerName: string) => {
     setActiveDrawer((prev) => (prev === drawerName ? null : drawerName));
@@ -1185,6 +1453,7 @@ export function App() {
               currentCwd={cwd}
               onResumeSession={handleResumeSession}
               onNewSession={handleNewSession}
+              runningInstances={runningInstances}
             />
           )}
 
@@ -1203,7 +1472,7 @@ export function App() {
                 }`}
               >
                 <AgentStudio
-                  instanceId={pane.id}
+                  instanceId={pane.instanceId || pane.id}
                   title={splitCount > 1 ? `${pane.title} (${(pane.cwd || cwd || '').split('\\').pop() || (pane.cwd || cwd || '').split('/').pop() || 'cwd'})` : 'OH-MY-PI // STUDIO'}
                   isFocusMode={isFocusMode}
                   isActivePane={activePaneId === pane.id}
@@ -1251,6 +1520,7 @@ export function App() {
                 isOpen={activeDrawer === 'sessions'}
                 onClose={() => setActiveDrawer(null)}
                 onResumeSession={handleResumeSession}
+                runningInstances={runningInstances}
               />
               <DevToolsDrawer
                 isOpen={activeDrawer === 'devtools'}

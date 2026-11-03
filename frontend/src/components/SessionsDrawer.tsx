@@ -8,12 +8,14 @@ interface SessionsDrawerProps {
   isOpen: boolean;
   onClose: () => void;
   onResumeSession: (session: SessionSummary) => void;
+  runningInstances?: string[];
 }
 
 export const SessionsDrawer: React.FC<SessionsDrawerProps> = ({
   isOpen,
   onClose,
   onResumeSession,
+  runningInstances = [],
 }) => {
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [loading, setLoading] = useState(false);
@@ -202,62 +204,75 @@ export const SessionsDrawer: React.FC<SessionsDrawerProps> = ({
               {loading ? 'OTURUMLAR YÜKLENİYOR...' : 'KAYITLI OTURUM BULUNAMADI.'}
             </div>
           ) : (
-            filteredSessions.map((s) => (
-              <div
-                key={s.id}
-                className="p-3.5 hover:bg-omp-surfaceLight transition-colors space-y-2 group"
-              >
-                <div className="flex items-start justify-between">
-                  <button
-                    onClick={() => handleViewDetail(s.path)}
-                    className="text-left font-bold text-white text-xs hover:text-omp-accent transition line-clamp-1 uppercase tracking-tight"
-                  >
-                    {s.title}
-                  </button>
-                  <span className="text-[10px] px-1.5 py-0.5 rounded-[2px] bg-omp-bg border border-omp-border text-omp-muted font-mono">
-                    {s.model || 'gemini-3.8-flash'}
-                  </span>
-                </div>
+            filteredSessions.map((s) => {
+              const isRunning = runningInstances.some(
+                (id) => id === s.id || id === 'sess_' + s.id
+              );
+              return (
+                <div
+                  key={s.id}
+                  className="p-3.5 hover:bg-omp-surfaceLight transition-colors space-y-2 group"
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <button
+                      onClick={() => handleViewDetail(s.path)}
+                      className="text-left font-bold text-white text-xs hover:text-omp-accent transition line-clamp-1 uppercase tracking-tight flex-1"
+                    >
+                      {s.title}
+                    </button>
+                    <div className="flex items-center space-x-1.5 shrink-0">
+                      {isRunning && (
+                        <span className="flex items-center space-x-1 px-1.5 py-0.5 rounded-[2px] bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 text-[9px] font-mono font-bold animate-pulse">
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+                          <span>Çalışıyor</span>
+                        </span>
+                      )}
+                      <span className="text-[10px] px-1.5 py-0.5 rounded-[2px] bg-omp-bg border border-omp-border text-omp-muted font-mono">
+                        {s.model || 'gemini-3.8-flash'}
+                      </span>
+                    </div>
+                  </div>
 
-                <div className="flex items-center space-x-3 text-[11px] text-omp-muted font-mono">
-                  <div className="flex items-center space-x-1">
-                    <Rune name="layouts-layers-2" size={12} />
-                    <span className="truncate max-w-[120px]">{s.project}</span>
+                  <div className="flex items-center space-x-3 text-[11px] text-omp-muted font-mono">
+                    <div className="flex items-center space-x-1">
+                      <Rune name="layouts-layers-2" size={12} />
+                      <span className="truncate max-w-[120px]">{s.project}</span>
+                    </div>
+                    <div className="flex items-center space-x-1">
+                      <Rune name="messaging-message-square" size={12} />
+                      <span className="tabular-nums">{s.msgCount} msj</span>
+                    </div>
+                    <div className="flex items-center space-x-1">
+                      <Rune name="schedule-clock" size={12} />
+                      <span className="tabular-nums">{new Date(s.updatedAt).toLocaleDateString()}</span>
+                    </div>
                   </div>
-                  <div className="flex items-center space-x-1">
-                    <Rune name="messaging-message-square" size={12} />
-                    <span className="tabular-nums">{s.msgCount} msj</span>
-                  </div>
-                  <div className="flex items-center space-x-1">
-                    <Rune name="schedule-clock" size={12} />
-                    <span className="tabular-nums">{new Date(s.updatedAt).toLocaleDateString()}</span>
-                  </div>
-                </div>
 
-                {/* Actions */}
-                <div className="flex items-center justify-end space-x-2 pt-1">
-                  <button
-                    onClick={() => handleExportHTML(s.path)}
-                    title="HTML Dışa Aktar"
-                    className="p-1 px-2 rounded-[2px] bg-omp-bg border border-omp-border hover:bg-omp-surfaceLight text-omp-muted hover:text-white text-[11px] flex items-center space-x-1 font-mono"
-                  >
-                    <Rune name="documents-file-text" size={12} />
-                    <span>HTML</span>
-                  </button>
-                  <button
-                    onClick={() => {
-                      onResumeSession(s);
-                      onClose();
-                    }}
-                    title="Bu oturumu yükle ve devam et"
-                    className="flex items-center space-x-1 px-3 py-1 rounded-[2px] bg-omp-accent hover:bg-omp-accentHover text-white transition text-xs font-bold font-mono uppercase tracking-wider"
-                  >
-                    <Rune name="playback-play" size={11} />
-                    <span>DEVAM</span>
-                  </button>
+                  {/* Actions */}
+                  <div className="flex items-center justify-end space-x-2 pt-1">
+                    <button
+                      onClick={() => handleExportHTML(s.path)}
+                      title="HTML Dışa Aktar"
+                      className="p-1 px-2 rounded-[2px] bg-omp-bg border border-omp-border hover:bg-omp-surfaceLight text-omp-muted hover:text-white text-[11px] flex items-center space-x-1 font-mono"
+                    >
+                      <Rune name="documents-file-text" size={12} />
+                      <span>HTML</span>
+                    </button>
+                    <button
+                      onClick={() => {
+                        onResumeSession(s);
+                        onClose();
+                      }}
+                      title="Bu oturumu yükle ve devam et"
+                      className="flex items-center space-x-1 px-3 py-1 rounded-[2px] bg-omp-accent hover:bg-omp-accentHover text-white transition text-xs font-bold font-mono uppercase tracking-wider"
+                    >
+                      <Rune name="playback-play" size={11} />
+                      <span>DEVAM</span>
+                    </button>
+                  </div>
                 </div>
-              </div>
-            ))
+              );
+            })
           )}
         </div>
       )}

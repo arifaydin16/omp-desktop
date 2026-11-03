@@ -110,6 +110,10 @@ export function GetRemoteApiStatus() {
   return window['go']['main']['App']['GetRemoteApiStatus']();
 }
 
+export function GetRunningInstances() {
+  return window['go']['main']['App']['GetRunningInstances']();
+}
+
 export function GetSessionDetail(arg1) {
   return window['go']['main']['App']['GetSessionDetail'](arg1);
 }
@@ -148,6 +152,10 @@ export function InstallSkill(arg1) {
 
 export function InstallUpdate(arg1, arg2, arg3) {
   return window['go']['main']['App']['InstallUpdate'](arg1, arg2, arg3);
+}
+
+export function IsInstanceRunning(arg1) {
+  return window['go']['main']['App']['IsInstanceRunning'](arg1);
 }
 
 export function LogoutProvider(arg1) {
