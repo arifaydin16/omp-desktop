@@ -65,10 +65,12 @@ func (pm *PluginManager) SetPluginEnabled(id string, enabled bool) error {
 	defer pm.mu.Unlock()
 
 	p, ok := pm.plugins[id]
+	if !ok && id == "ticket-responder" {
+		p, ok = pm.plugins["task-responder"]
+	}
 	if !ok {
 		return fmt.Errorf("plugin %s not found", id)
 	}
-
 	p.SetEnabled(enabled)
 	pm.saveStateLocked()
 	return nil
@@ -80,10 +82,12 @@ func (pm *PluginManager) UpdatePluginSettings(id string, settings map[string]int
 	defer pm.mu.Unlock()
 
 	p, ok := pm.plugins[id]
+	if !ok && id == "ticket-responder" {
+		p, ok = pm.plugins["task-responder"]
+	}
 	if !ok {
 		return fmt.Errorf("plugin %s not found", id)
 	}
-
 	if err := p.UpdateSettings(settings); err != nil {
 		return err
 	}
@@ -152,14 +156,17 @@ func (pm *PluginManager) loadPluginState(p Plugin) {
 	}
 
 	info := p.Info()
-	if st, ok := stateMap[info.ID]; ok {
+	st, ok := stateMap[info.ID]
+	if !ok && info.ID == "task-responder" {
+		st, ok = stateMap["ticket-responder"]
+	}
+	if ok {
 		p.SetEnabled(st.Enabled)
 		if st.Settings != nil {
 			_ = p.UpdateSettings(st.Settings)
 		}
 	}
 }
-
 func (pm *PluginManager) saveStateLocked() {
 	stateMap := make(map[string]pluginStoredState)
 	for id, p := range pm.plugins {

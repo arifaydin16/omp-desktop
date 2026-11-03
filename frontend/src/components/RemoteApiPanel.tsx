@@ -289,7 +289,7 @@ export const RemoteApiPanel: React.FC = () => {
                 : 'text-omp-muted hover:text-zinc-200'
             }`}
           >
-            01 // Polling Modu (Ticket Entegrasyonu)
+            01 // Polling Modu (Uzak Görev & Webhook)
           </button>
           <button
             type="button"
@@ -337,7 +337,7 @@ export const RemoteApiPanel: React.FC = () => {
                   Sıfır Port Yapılandırması & NAT/Güvenlik Duvarı Aşımı (Outbound Pull)
                 </div>
                 <p className="text-[11px] text-emerald-200/90 leading-relaxed">
-                  Ticket sisteminiz internet üzerindeki bir sunucudayken (<code>https://ticket.oemsoft.net</code>), dışarıdan yerel bilgisayarınıza port açmaya veya ngrok/cloudflare gibi tüneller kurmaya gerek kalmaz. <strong>Polling Modu</strong> aktifken OMP Desktop dışa doğru güvenli isteklerle bilet sistemini yoklar; bekleyen bir görev olduğunda anında canlı çalışma dizininde tam yetkiyle çalıştırır ve tamamlanma durumunu sunucuya bildirir.
+                  Sunucunuz uzakta veya bulutta çalışırken, dışarıdan yerel bilgisayarınıza port açmaya veya karmaşık tüneller kurmaya gerek kalmaz. <strong>Polling Modu</strong> aktifken OMP Desktop dışa doğru güvenli HTTPS istekleriyle uzak sunucuyu yoklar; bekleyen bir görev olduğunda anında canlı çalışma dizininde tam yetkiyle çalıştırır ve tamamlanma durumunu sunucuya bildirir.
                 </p>
               </div>
             </div>
@@ -364,18 +364,18 @@ export const RemoteApiPanel: React.FC = () => {
             <div className="space-y-3 pt-2">
               <div className="space-y-1.5">
                 <label className="text-xs font-bold text-zinc-300 uppercase tracking-wider flex items-center justify-between">
-                  <span>Ticket Sistemi Polling Uç Noktası (Polling URL) <span className="text-rose-400">*</span></span>
+                  <span>Uzak Görev Yoklama Uç Noktası (Polling URL) <span className="text-rose-400">*</span></span>
                   <span className="text-[10px] text-omp-muted font-normal">GET & POST uç noktası</span>
                 </label>
                 <input
                   type="url"
                   value={config.pollingUrl || ''}
                   onChange={(e) => setConfig({ ...config, pollingUrl: e.target.value })}
-                  placeholder="https://ticket.oemsoft.net/api/agent_poll.php"
+                  placeholder="https://api.example.com/tasks/poll"
                   className="w-full bg-omp-bg border border-omp-border rounded-[2px] px-3 py-1.5 font-mono text-xs text-zinc-200 focus:outline-none focus:border-emerald-500"
                 />
                 <p className="text-[10px] text-omp-muted">
-                  Ticket sisteminde hazır olan <code>https://ticket.oemsoft.net/api/agent_poll.php</code> adresini kullanabilirsiniz.
+                  Uzak sunucunuzdaki görev yoklama uç noktasını (API veya webhook) girin.
                 </p>
               </div>
 
@@ -397,18 +397,18 @@ export const RemoteApiPanel: React.FC = () => {
 
                 <div className="space-y-1.5">
                   <label className="text-xs font-bold text-zinc-300 uppercase tracking-wider flex items-center justify-between">
-                    <span>Firma Polling API Anahtarı <span className="text-rose-400">*</span></span>
-                    <span className="text-[10px] text-emerald-400 font-normal">Firma İzolasyonu</span>
+                    <span>Polling API Anahtarı <span className="text-rose-400">*</span></span>
+                    <span className="text-[10px] text-emerald-400 font-normal">Kimlik Doğrulama</span>
                   </label>
                   <input
                     type="text"
                     value={config.pollingApiKey || ''}
                     onChange={(e) => setConfig({ ...config, pollingApiKey: e.target.value })}
-                    placeholder="Örn: omp_poll_... (Ticket sisteminden kopyalayın)"
+                    placeholder="Örn: omp_poll_... (Uzak API anahtarınız)"
                     className="w-full bg-omp-bg border border-omp-border rounded-[2px] px-3 py-1.5 font-mono text-xs text-zinc-200 focus:outline-none focus:border-emerald-500"
                   />
                   <p className="text-[10px] text-omp-muted">
-                    Farklı firmaların görevlerinin karışmaması için ticket sisteminde AI Agent ayarlarında firmanız için tanımlanan <strong>Polling API Key</strong>'i buraya girin.
+                    Uzak görev sunucusuna güvenli erişim ve kimlik doğrulaması sağlamak için tanımlanan API Key'i buraya girin.
                   </p>
                 </div>
               </div>

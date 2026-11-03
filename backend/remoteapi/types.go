@@ -73,18 +73,19 @@ type PromptRequest struct {
 	Sync          bool     `json:"sync,omitempty"` // if true, blocks until run completes
 }
 
-// PollResponse represents response received from ticket server when polling
+// PollResponse represents response received from remote server when polling
 type PollResponse struct {
 	Success bool        `json:"success"`
 	HasTask bool        `json:"has_task"`
 	Message string      `json:"message,omitempty"`
-	Task    *TicketTask `json:"task,omitempty"`
+	Task    *RemoteTask `json:"task,omitempty"`
 }
 
-// TicketTask represents the task payload returned by ticket server
-type TicketTask struct {
+// RemoteTask represents the task payload returned by remote task server
+type RemoteTask struct {
 	TaskID         any    `json:"task_id"`
-	TicketID       any    `json:"ticket_id"`
+	ReferenceID    any    `json:"reference_id,omitempty"`
+	TicketID       any    `json:"ticket_id,omitempty"`
 	CompanyID      any    `json:"company_id,omitempty"`
 	CompanyName    string `json:"company_name,omitempty"`
 	Subject        string `json:"subject,omitempty"`
@@ -93,3 +94,6 @@ type TicketTask struct {
 	ReportFilename string `json:"report_filename,omitempty"`
 	CallbackURL    string `json:"callback_url,omitempty"`
 }
+
+// TicketTask alias for backward compatibility
+type TicketTask = RemoteTask

@@ -6,27 +6,35 @@ import (
 	"sync"
 )
 
-// TicketChatbotPlugin implements automated ticket replies and chatbot looping
-type TicketChatbotPlugin struct {
+// TaskChatbotPlugin implements automated task auto-reply and interactive looping
+type TaskChatbotPlugin struct {
 	mu       sync.RWMutex
 	enabled  bool
 	settings map[string]interface{}
 }
 
-// NewTicketChatbotPlugin initializes the default ticket auto-responder & chatbot plugin
-func NewTicketChatbotPlugin() *TicketChatbotPlugin {
-	return &TicketChatbotPlugin{
+// NewTaskChatbotPlugin initializes the default task auto-responder & chatbot plugin
+func NewTaskChatbotPlugin() *TaskChatbotPlugin {
+	return &TaskChatbotPlugin{
 		enabled: true,
 		settings: map[string]interface{}{
 			"auto_reply":        true,
-			"reply_prefix":      "🤖 **[OMP AI Destek Asistanı]**\n\n",
+			"reply_prefix":      "🤖 **[OMP Asistanı]**\n\n",
 			"mark_waiting_user": true,
-			"include_ticket_id": true,
+			"include_task_id":   true,
 		},
 	}
 }
 
-func (p *TicketChatbotPlugin) Info() PluginInfo {
+// NewTicketChatbotPlugin is an alias for backward compatibility
+func NewTicketChatbotPlugin() *TaskChatbotPlugin {
+	return NewTaskChatbotPlugin()
+}
+
+// TicketChatbotPlugin alias for backward compatibility
+type TicketChatbotPlugin = TaskChatbotPlugin
+
+func (p *TaskChatbotPlugin) Info() PluginInfo {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 
@@ -36,9 +44,9 @@ func (p *TicketChatbotPlugin) Info() PluginInfo {
 	}
 
 	return PluginInfo{
-		ID:          "ticket-responder",
-		Name:        "Ticket Sistemi Otomatik Yanıtlayıcı & Chatbot",
-		Description: "Ticket sisteminden gelen görevler tamamlandığında otomatik olarak bilete yanıt (reply) ekler ve kullanıcı cevap verdiğinde chatbot döngüsünü sürdürür.",
+		ID:          "task-responder",
+		Name:        "Otomatik Görev Yanıtlayıcı & Chatbot",
+		Description: "Uzak sistemden gelen görevler tamamlandığında otomatik olarak geri bildirim/yanıt iletir ve kullanıcı cevap verdiğinde etkileşim döngüsünü sürdürür.",
 		Version:     "1.0.0",
 		Author:      "OMP Desktop Core",
 		Enabled:     p.enabled,
@@ -46,19 +54,19 @@ func (p *TicketChatbotPlugin) Info() PluginInfo {
 	}
 }
 
-func (p *TicketChatbotPlugin) IsEnabled() bool {
+func (p *TaskChatbotPlugin) IsEnabled() bool {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 	return p.enabled
 }
 
-func (p *TicketChatbotPlugin) SetEnabled(enabled bool) {
+func (p *TaskChatbotPlugin) SetEnabled(enabled bool) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.enabled = enabled
 }
 
-func (p *TicketChatbotPlugin) GetSettings() map[string]interface{} {
+func (p *TaskChatbotPlugin) GetSettings() map[string]interface{} {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 
@@ -69,7 +77,7 @@ func (p *TicketChatbotPlugin) GetSettings() map[string]interface{} {
 	return copy
 }
 
-func (p *TicketChatbotPlugin) UpdateSettings(newSettings map[string]interface{}) error {
+func (p *TaskChatbotPlugin) UpdateSettings(newSettings map[string]interface{}) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
@@ -83,13 +91,13 @@ func (p *TicketChatbotPlugin) UpdateSettings(newSettings map[string]interface{})
 }
 
 // OnTaskReceived can inspect or enrich the task before OMP executes it
-func (p *TicketChatbotPlugin) OnTaskReceived(ctx *TaskContext) (*TaskContext, error) {
+func (p *TaskChatbotPlugin) OnTaskReceived(ctx *TaskContext) (*TaskContext, error) {
 	// Hook point: can inject context or log task intake
 	return ctx, nil
 }
 
-// OnTaskCompleted formats the assistant's answer and enables automatic ticket response
-func (p *TicketChatbotPlugin) OnTaskCompleted(ctx *TaskContext, result *TaskResult) (*TaskResult, error) {
+// OnTaskCompleted formats the assistant's answer and enables automatic task response
+func (p *TaskChatbotPlugin) OnTaskCompleted(ctx *TaskContext, result *TaskResult) (*TaskResult, error) {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 
@@ -107,10 +115,10 @@ func (p *TicketChatbotPlugin) OnTaskCompleted(ctx *TaskContext, result *TaskResu
 
 		prefix, _ := p.settings["reply_prefix"].(string)
 		if prefix == "" {
-			prefix = "🤖 **[OMP AI Destek Asistanı]**\n\n"
+			prefix = "🤖 **[OMP Asistanı]**\n\n"
 		}
 
-		cleanOutput := cleanTicketAgentOutput(result.Output)
+		cleanOutput := cleanAgentTaskOutput(result.Output)
 		var sb strings.Builder
 		sb.WriteString(prefix)
 		sb.WriteString(cleanOutput)
@@ -120,37 +128,36 @@ func (p *TicketChatbotPlugin) OnTaskCompleted(ctx *TaskContext, result *TaskResu
 		result.AutoReply = true
 		prefix, _ := p.settings["reply_prefix"].(string)
 		if prefix == "" {
-			prefix = "🤖 **[OMP AI Destek Asistanı]**\n\n"
+			prefix = "🤖 **[OMP Asistanı]**\n\n"
 		}
-		result.ReplyMessage = prefix + "İşleminize şuan devam edilemiyor. Lütfen RDP üzerinden kontrol ediniz."
+		result.ReplyMessage = prefix + "İşleminize şu an devam edilemiyor. Lütfen uzaktan bağlantı ile kontrol ediniz."
 	}
 
 	return result, nil
 }
 
-// OnTaskFailed logs or notifies ticket failure
-func (p *TicketChatbotPlugin) OnTaskFailed(ctx *TaskContext, err error) error {
+// OnTaskFailed logs or notifies task failure
+func (p *TaskChatbotPlugin) OnTaskFailed(ctx *TaskContext, err error) error {
 	return nil
 }
 
-// cleanTicketAgentOutput removes internal agent monologue and initial debug scratchpad
+// cleanAgentTaskOutput removes internal agent monologue and initial debug scratchpad
 // while strictly preserving all tables, dividers, and user-facing content verbatim.
-func cleanTicketAgentOutput(raw string) string {
+func cleanAgentTaskOutput(raw string) string {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {
 		return ""
 	}
 
 	// 1. Strip XML-style thinking tags: <think>...</think> or <thinking>...</thinking>
-	thinkRe := regexp.MustCompile(`(?s)^\s*<think(?:ing)?>.*?</think(?:ing)>\s*`)
-	trimmed = strings.TrimSpace(thinkRe.ReplaceAllString(trimmed, ""))
+	thinkRe := regexp.MustCompile(`(?is)^\s*<think(?:ing)?>.*?</think(?:ing)>\s*`)
+	trimmed = thinkRe.ReplaceAllString(trimmed, "")
 
-	// 2. Strip explicit thinking block: "Thinking Process:\n...\n\n"
-	explicitRe := regexp.MustCompile(`(?is)^\s*(?:Thinking Process|Thought Process|Reasoning Process|Thinking):\s*\n.*?(?:\n\n(?:Response|Answer|Final Answer):\s*\n|\n---\n)`)
-	trimmed = strings.TrimSpace(explicitRe.ReplaceAllString(trimmed, ""))
+	// 2. Strip explicit thinking block: "\n\nThinking Process:\n...\n\nExplicit Response/Answer/Final Answer:\n\n"
+	explicitRe := regexp.MustCompile(`(?is)^\s*(?:Thinking Process|Thought Process|Reasoning Process|Thinking):\s*\n.*?\n\s*(?:Response|Answer|Final Answer):\s*\n+`)
+	trimmed = explicitRe.ReplaceAllString(trimmed, "")
 
 	// 3. Strip English tool preamble / monologue before Turkish greeting or Markdown heading/table
-	// Example: "I have the context from previous ticket work. ... for context:Merhaba Arif Bey,"
 	lowerTrimmed := strings.ToLower(trimmed)
 	if strings.HasPrefix(lowerTrimmed, "i have") ||
 		strings.HasPrefix(lowerTrimmed, "now let me") ||
@@ -164,31 +171,35 @@ func cleanTicketAgentOutput(raw string) string {
 
 		turkishMarkers := []string{
 			"merhaba", "selamlar", "sayın", "iyi günler", "değerli",
-			"günaydın", "bilet", "sorgu sonucuna", "veritabanından",
+			"günaydın", "görev", "talep", "bilet", "sorgu sonucuna", "veritabanından",
 			"yapılan incelemede", "kontroller sağlandığında",
 		}
 		earliestIdx := -1
-		for _, marker := range turkishMarkers {
-			if idx := strings.Index(lowerTrimmed, marker); idx != -1 {
+		for _, m := range turkishMarkers {
+			idx := strings.Index(lowerTrimmed, m)
+			if idx != -1 {
 				if earliestIdx == -1 || idx < earliestIdx {
 					earliestIdx = idx
 				}
 			}
 		}
-		if hIdx := strings.Index(trimmed, "\n#"); hIdx != -1 {
-			if earliestIdx == -1 || hIdx+1 < earliestIdx {
-				earliestIdx = hIdx + 1
-			}
+
+		headingIdx := strings.Index(trimmed, "\n#")
+		if headingIdx != -1 && (earliestIdx == -1 || headingIdx+1 < earliestIdx) {
+			earliestIdx = headingIdx + 1
 		}
-		if tIdx := strings.Index(trimmed, "\n|"); tIdx != -1 {
-			if earliestIdx == -1 || tIdx+1 < earliestIdx {
-				earliestIdx = tIdx + 1
-			}
+
+		tableIdx := strings.Index(trimmed, "\n|")
+		if tableIdx != -1 && (earliestIdx == -1 || tableIdx+1 < earliestIdx) {
+			earliestIdx = tableIdx + 1
 		}
+
 		if earliestIdx > 0 {
 			trimmed = strings.TrimSpace(trimmed[earliestIdx:])
 		}
 	}
+
+	// 4. Line-by-line filter for internal monologue before the actual content begins
 	lines := strings.Split(trimmed, "\n")
 	var cleanLines []string
 	skippingScratchpad := true
@@ -210,22 +221,27 @@ func cleanTicketAgentOutput(raw string) string {
 				skippedMonologueLines = true
 				continue
 			}
+
 			// If we skipped monologue lines and immediately encounter an initial divider, skip that divider too
-			if skippedMonologueLines && (t == "---" || t == "***" || t == "--- " || t == "*** ") {
+			if skippedMonologueLines && (t == "---" || t == "***") {
 				continue
 			}
+
 			if t == "" {
 				continue
 			}
+
 			// First real content line reached (heading, table, list, text)
 			skippingScratchpad = false
 		}
 		cleanLines = append(cleanLines, line)
 	}
 
-	result := strings.TrimSpace(strings.Join(cleanLines, "\n"))
-	if result != "" {
-		return result
-	}
+	trimmed = strings.TrimSpace(strings.Join(cleanLines, "\n"))
 	return trimmed
+}
+
+// cleanTicketAgentOutput is an alias for backward compatibility
+func cleanTicketAgentOutput(raw string) string {
+	return cleanAgentTaskOutput(raw)
 }

@@ -23,7 +23,7 @@ func TestPluginLifecycleAndPersistence(t *testing.T) {
 	if len(list) != 1 {
 		t.Fatalf("expected 1 plugin, got %d", len(list))
 	}
-	if list[0].ID != "ticket-responder" {
+	if list[0].ID != "task-responder" {
 		t.Errorf("unexpected plugin ID: %s", list[0].ID)
 	}
 	if !list[0].Enabled {
@@ -98,13 +98,13 @@ func TestPluginLifecycleAndPersistence(t *testing.T) {
 	if !dispatchedFail.AutoReply {
 		t.Errorf("expected AutoReply to be true on failure")
 	}
-	expectedSub := "İşleminize şuan devam edilemiyor. Lütfen RDP üzerinden kontrol ediniz."
+	expectedSub := "İşleminize şu an devam edilemiyor. Lütfen uzaktan bağlantı ile kontrol ediniz."
 	if !strings.Contains(dispatchedFail.ReplyMessage, expectedSub) {
 		t.Errorf("expected failure message to contain '%s', got '%s'", expectedSub, dispatchedFail.ReplyMessage)
 	}
 
 	// 3. Test settings update and persistence
-	err = pm.UpdatePluginSettings("ticket-responder", map[string]interface{}{
+	err = pm.UpdatePluginSettings("task-responder", map[string]interface{}{
 		"reply_prefix": "[CUSTOM PREFIX] ",
 		"auto_reply":   true,
 	})

@@ -748,15 +748,21 @@ func (s *Service) executePolledTask(task *TicketTask) {
 	s.mu.Unlock()
 
 	targetInstID := s.ompService.FindAvailableInstanceID()
+	refID := task.ReferenceID
+	if refID == nil || refID == "" {
+		refID = task.TicketID
+	}
 	if s.wailsCtx != nil {
 		runtime.EventsEmit(s.wailsCtx, "remote_api:task_started", map[string]interface{}{
-			"instanceId": targetInstID,
-			"prompt":     task.Prompt,
-			"cwd":        targetCwd,
-			"runId":      runInfo.RunID,
-			"ticketId":   task.TicketID,
-			"company":    task.CompanyName,
-			"subject":    task.Subject,
+			"instanceId":  targetInstID,
+			"prompt":      task.Prompt,
+			"cwd":         targetCwd,
+			"runId":       runInfo.RunID,
+			"taskId":      task.TaskID,
+			"referenceId": refID,
+			"ticketId":    refID,
+			"company":     task.CompanyName,
+			"subject":     task.Subject,
 		})
 	}
 
@@ -863,13 +869,13 @@ func (s *Service) OnInstanceTurnComplete(instanceId string, output string, runEr
 	_ = s.SendTaskCompletionCallback(task, output, runErr, targetCwd)
 }
 
-// SyncTicketReply sends the current assistant output of an instance to its bound ticket
-func (s *Service) SyncTicketReply(instanceId string, outputText string) error {
+// SyncTaskReply sends the current assistant output of an instance to its bound remote task
+func (s *Service) SyncTaskReply(instanceId string, outputText string) error {
 	s.mu.RLock()
 	task, ok := s.activeTasksByInstance[instanceId]
 	s.mu.RUnlock()
 	if !ok || task == nil {
-		return fmt.Errorf("bu terminal penceresi için bağlı bir ticket görevi bulunamadı")
+		return fmt.Errorf("bu terminal penceresi için bağlı bir uzak görev bulunamadı")
 	}
 
 	targetCwd := strings.TrimSpace(task.WorkspacePath)
@@ -881,6 +887,10 @@ func (s *Service) SyncTicketReply(instanceId string, outputText string) error {
 	return s.SendTaskCompletionCallback(task, outputText, nil, targetCwd)
 }
 
+// SyncTicketReply is an alias for SyncTaskReply for backward compatibility
+func (s *Service) SyncTicketReply(instanceId string, outputText string) error {
+	return s.SyncTaskReply(instanceId, outputText)
+}
 // SendTaskCompletionCallback formats the result and sends callback to the ticket server
 func (s *Service) SendTaskCompletionCallback(task *TicketTask, agentOutput string, runErr error, targetCwd string) error {
 	s.mu.Lock()
@@ -917,16 +927,20 @@ func (s *Service) SendTaskCompletionCallback(task *TicketTask, agentOutput strin
 		errMsg = runErr.Error()
 	}
 
+	refID := task.ReferenceID
+	if refID == nil || refID == "" {
+		refID = task.TicketID
+	}
 	taskCtx := &plugins.TaskContext{
 		TaskID:      task.TaskID,
-		TicketID:    task.TicketID,
+		ReferenceID: refID,
+		TicketID:    refID,
 		Company:     task.CompanyName,
 		Subject:     task.Subject,
 		Prompt:      task.Prompt,
 		Workspace:   targetCwd,
 		CallbackURL: callbackURL,
 	}
-
 	taskRes := &plugins.TaskResult{
 		Status: finalStatus,
 		Output: agentOutput,
@@ -950,7 +964,8 @@ func (s *Service) SendTaskCompletionCallback(task *TicketTask, agentOutput strin
 	callbackPayload := map[string]interface{}{
 		"action":        "complete",
 		"task_id":       task.TaskID,
-		"ticket_id":     task.TicketID,
+		"reference_id":  refID,
+		"ticket_id":     refID,
 		"status":        finalStatus,
 		"error":         errMsg,
 		"output":        finalOutput,
@@ -979,13 +994,20 @@ func (s *Service) SendTaskCompletionCallback(task *TicketTask, agentOutput strin
 	defer resp.Body.Close()
 
 	if s.wailsCtx != nil {
+		runtime.EventsEmit(s.wailsCtx, "task:reply_synced", map[string]interface{}{
+			"referenceId": refID,
+			"ticketId":    refID,
+			"taskId":      task.TaskID,
+			"status":      finalStatus,
+			"message":     replyToSend,
+		})
 		runtime.EventsEmit(s.wailsCtx, "ticket:reply_synced", map[string]interface{}{
-			"ticketId": task.TicketID,
-			"taskId":   task.TaskID,
-			"status":   finalStatus,
-			"message":  replyToSend,
+			"referenceId": refID,
+			"ticketId":    refID,
+			"taskId":      task.TaskID,
+			"status":      finalStatus,
+			"message":     replyToSend,
 		})
 	}
-
 	return nil
 }

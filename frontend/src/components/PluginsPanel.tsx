@@ -106,7 +106,7 @@ export const PluginsPanel: React.FC = () => {
           </div>
         ) : (
           pluginsList.map((plugin) => {
-            const isTicketResponder = plugin.id === 'ticket-responder';
+            const isAutoResponder = plugin.id === 'task-responder' || plugin.id === 'ticket-responder' || plugin.id === 'auto-responder';
             const settings = plugin.settings || {};
 
             return (
@@ -122,7 +122,7 @@ export const PluginsPanel: React.FC = () => {
                         plugin.enabled ? 'bg-gradient-to-r from-[#E84AC3] to-[#6EADEE]' : 'bg-zinc-700 text-zinc-400'
                       }`}
                     >
-                      <Rune name={isTicketResponder ? 'communication-message-square' : 'tools-settings'} size={15} />
+                      <Rune name={isAutoResponder ? 'communication-message-square' : 'tools-settings'} size={15} />
                     </div>
 
                     <div>
@@ -159,7 +159,7 @@ export const PluginsPanel: React.FC = () => {
                       <span>EKLENTİ YAPILANDIRMASI</span>
                     </div>
 
-                    {isTicketResponder ? (
+                    {isAutoResponder ? (
                       <div className="space-y-3 text-xs">
                         {/* Auto Reply Toggle */}
                         <label className="flex items-center space-x-2.5 cursor-pointer select-none">
@@ -170,7 +170,7 @@ export const PluginsPanel: React.FC = () => {
                             className="rounded-[2px] border-omp-border bg-omp-bg text-emerald-500 focus:ring-0"
                           />
                           <span className="text-zinc-200">
-                            <strong>Otomatik Bilet Yanıtı (Auto-Reply):</strong> Görev tamamlandığında OMP çıktısını doğrudan bilete cevap (reply) olarak gönder.
+                            <strong>Otomatik Görev Yanıtı (Auto-Reply):</strong> Görev tamamlandığında OMP çıktısını doğrudan uzak sunucuya yanıt/callback olarak gönder.
                           </span>
                         </label>
 
@@ -183,7 +183,7 @@ export const PluginsPanel: React.FC = () => {
                             className="rounded-[2px] border-omp-border bg-omp-bg text-emerald-500 focus:ring-0"
                           />
                           <span className="text-zinc-200">
-                            <strong>Bilet Durumu:</strong> Cevap gönderildikten sonra bileti 'Kullanıcıdan Mesaj Bekleniyor' durumuna al.
+                            <strong>Görev Durumu (Durum Güncelleme):</strong> Cevap iletildikten sonra görevi 'Kullanıcıdan Mesaj Bekleniyor' durumuna al.
                           </span>
                         </label>
 
@@ -197,10 +197,10 @@ export const PluginsPanel: React.FC = () => {
                             value={String(settings['reply_prefix'] || '')}
                             onChange={(e) => handleSettingChange(plugin.id, 'reply_prefix', e.target.value)}
                             className="w-full bg-omp-bg border border-omp-border rounded-[2px] px-3 py-1.5 font-mono text-xs text-white focus:outline-none focus:border-emerald-500"
-                            placeholder="🤖 **[OMP AI Destek Asistanı]**\n\n"
+                            placeholder="🤖 **[OMP Asistanı]**\n\n"
                           />
                           <p className="text-[10px] text-zinc-500">
-                            Bilet cevabının en başına eklenen etiket veya imza metni.
+                            Görev cevabının en başına eklenen etiket veya imza metni.
                           </p>
                         </div>
 
@@ -208,10 +208,9 @@ export const PluginsPanel: React.FC = () => {
                         <div className="p-3 rounded-[2px] bg-gradient-to-r from-emerald-500/10 to-sky-500/10 border border-emerald-500/30 flex items-start space-x-2.5">
                           <Rune name="indicators-check" size={14} className="text-emerald-400 shrink-0 mt-0.5" />
                           <div className="text-[11px] leading-relaxed text-zinc-300">
-                            <strong className="text-white">Chatbot Döngüsü Aktif:</strong> Ticket detayında kullanıcı veya müşteri yeni bir mesaj/cevap yazdığında, talep daha önce AI Agent'a gönderilmişse otomatik olarak OMP Desktop kuyruğuna alınır ve OMP Desktop cevabı hazırlayıp bilet altına ekler.
+                            <strong className="text-white">Etkileşim Döngüsü Aktif:</strong> Uzak sistemde kullanıcı veya müşteri yeni bir mesaj/cevap yazdığında, talep otomatik olarak OMP Desktop kuyruğuna alınır ve OMP Desktop cevabı hazırlayıp göreve iletir.
                           </div>
                         </div>
-
                         {/* Save Button */}
                         <div className="pt-2 flex justify-end">
                           <button

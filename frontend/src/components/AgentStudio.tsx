@@ -137,6 +137,7 @@ interface AgentStudioProps {
   hasMoreOlderMessages?: boolean;
   totalSessionMessages?: number;
   onLoadOlderMessages?: () => void;
+  taskId?: string;
   ticketId?: string;
 }
 
@@ -174,8 +175,10 @@ export const AgentStudio: React.FC<AgentStudioProps> = ({
   onOpenSettings,
   onOpenDevTools,
   onAddSystemMessage,
+  taskId,
   ticketId,
 }) => {
+  const activeTaskId = taskId || ticketId;
   const [prompt, setPrompt] = useState('');
   const [showHelpModal, setShowHelpModal] = useState(false);
   const [helpModalTab, setHelpModalTab] = useState<'commands' | 'hotkeys'>('commands');
@@ -2238,21 +2241,29 @@ export const AgentStudio: React.FC<AgentStudioProps> = ({
   };
 
 
-  const [syncingTicket, setSyncingTicket] = useState(false);
-  const [ticketSyncedSuccess, setTicketSyncedSuccess] = useState(false);
+  const [syncingTask, setSyncingTask] = useState(false);
+  const [taskSyncedSuccess, setTaskSyncedSuccess] = useState(false);
 
-  const handleSyncTicketReply = async () => {
-    setSyncingTicket(true);
+  const handleSyncTaskReply = async () => {
+    setSyncingTask(true);
     try {
       const lastAsst = [...messages].reverse().find((m) => m.role === 'assistant' && m.text);
       const textToSend = lastAsst ? lastAsst.text : '';
-      await AppApi.SyncTicketReply(instanceId || 'main', textToSend);
-      setTicketSyncedSuccess(true);
-      setTimeout(() => setTicketSyncedSuccess(false), 3000);
+      const api = AppApi as unknown as {
+        SyncTaskReply?: (inst: string, out: string) => Promise<void>;
+        SyncTicketReply?: (inst: string, out: string) => Promise<void>;
+      };
+      if (typeof api.SyncTaskReply === 'function') {
+        await api.SyncTaskReply(instanceId || 'main', textToSend);
+      } else if (typeof api.SyncTicketReply === 'function') {
+        await api.SyncTicketReply(instanceId || 'main', textToSend);
+      }
+      setTaskSyncedSuccess(true);
+      setTimeout(() => setTaskSyncedSuccess(false), 3000);
     } catch (err) {
-      console.error('SyncTicketReply err:', err);
+      console.error('SyncTaskReply err:', err);
     } finally {
-      setSyncingTicket(false);
+      setSyncingTask(false);
     }
   };
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
@@ -3739,18 +3750,18 @@ export const AgentStudio: React.FC<AgentStudioProps> = ({
           )}
         </div>
         <div className="flex items-center space-x-2 text-xs">
-          {ticketId && (
+          {activeTaskId && (
             <div className="flex items-center space-x-1.5 px-2 py-0.5 rounded-[2px] bg-emerald-500/15 border border-emerald-500/40 text-emerald-400 text-[10px] font-mono">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-              <span>TICKET #{ticketId}</span>
+              <span>GÖREV #{activeTaskId}</span>
               <button
                 type="button"
-                onClick={handleSyncTicketReply}
-                disabled={syncingTicket}
+                onClick={handleSyncTaskReply}
+                disabled={syncingTask}
                 className="ml-1 px-1.5 py-0.2 rounded-[2px] bg-emerald-600 hover:bg-emerald-500 text-white font-bold transition text-[9px]"
-                title="En son asistan cevabını doğrudan bilet sistemine ilet"
+                title="En son asistan cevabını doğrudan uzak göreve ilet"
               >
-                {syncingTicket ? 'İletiliyor...' : (ticketSyncedSuccess ? 'İletildi ✓' : 'Bilete İlet')}
+                {syncingTask ? 'İletiliyor...' : (taskSyncedSuccess ? 'İletildi ✓' : 'Cevabı İlet')}
               </button>
             </div>
           )}

@@ -14,7 +14,8 @@ type PluginInfo struct {
 // TaskContext carries task details through plugin lifecycle hooks
 type TaskContext struct {
 	TaskID      any    `json:"taskId"`
-	TicketID    any    `json:"ticketId"`
+	ReferenceID any    `json:"referenceId,omitempty"`
+	TicketID    any    `json:"ticketId,omitempty"`
 	Company     string `json:"company"`
 	Subject     string `json:"subject"`
 	Prompt      string `json:"prompt"`

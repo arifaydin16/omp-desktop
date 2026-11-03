@@ -282,6 +282,10 @@ export function StopAgentInstance(arg1) {
   return window['go']['main']['App']['StopAgentInstance'](arg1);
 }
 
+export function SyncTaskReply(arg1, arg2) {
+  return window['go']['main']['App']['SyncTaskReply'](arg1, arg2);
+}
+
 export function SyncTicketReply(arg1, arg2) {
   return window['go']['main']['App']['SyncTicketReply'](arg1, arg2);
 }

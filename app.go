@@ -35,7 +35,7 @@ func NewApp() *App {
 	updateSvc := update.NewService(binPath)
 	remoteApiSvc := remoteapi.NewService(ompSvc)
 	pluginMgr := plugins.NewPluginManager("")
-	pluginMgr.Register(plugins.NewTicketChatbotPlugin())
+	pluginMgr.Register(plugins.NewTaskChatbotPlugin())
 	remoteApiSvc.SetPluginManager(pluginMgr)
 
 	ompSvc.SetTurnCompleteHook(func(instanceId string, output string, err error) {
@@ -138,9 +138,14 @@ func (a *App) UpdateDesktopPluginSettings(pluginID string, settings map[string]i
 	return a.pluginManager.UpdatePluginSettings(pluginID, settings)
 }
 
-// SyncTicketReply transmits the specified output or latest assistant response to the bound ticket
+// SyncTaskReply transmits the specified output or latest assistant response to the bound remote task
+func (a *App) SyncTaskReply(instanceId string, outputText string) error {
+	return a.remoteApiService.SyncTaskReply(instanceId, outputText)
+}
+
+// SyncTicketReply is an alias for SyncTaskReply for backward compatibility
 func (a *App) SyncTicketReply(instanceId string, outputText string) error {
-	return a.remoteApiService.SyncTicketReply(instanceId, outputText)
+	return a.remoteApiService.SyncTaskReply(instanceId, outputText)
 }
 
 // TrimMemory forces immediate GC and purges working sets for app and webview2

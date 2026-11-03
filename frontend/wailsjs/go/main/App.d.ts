@@ -145,6 +145,8 @@ export function StopAgent():Promise<void>;
 
 export function StopAgentInstance(arg1:string):Promise<void>;
 
+export function SyncTaskReply(arg1:string,arg2:string):Promise<void>;
+
 export function SyncTicketReply(arg1:string,arg2:string):Promise<void>;
 
 export function TrimMemory():Promise<void>;

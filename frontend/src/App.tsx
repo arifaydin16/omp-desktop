@@ -25,6 +25,7 @@ export interface InstancePaneState {
   isWorking: boolean;
   fullSessionMessages?: ChatMessage[];
   displayedMessageCount?: number;
+  taskId?: string;
   ticketId?: string;
 }
 
@@ -39,6 +40,7 @@ export interface CachedSessionData {
   isWorking: boolean;
   fullSessionMessages?: ChatMessage[];
   displayedMessageCount?: number;
+  taskId?: string;
   ticketId?: string;
 }
 
@@ -704,7 +706,9 @@ export function App() {
       const targetId = (typeof obj.instanceId === 'string' && obj.instanceId) ? obj.instanceId : 'main';
       const promptText = typeof obj.prompt === 'string' ? obj.prompt : '';
       const taskCwd = typeof obj.cwd === 'string' ? obj.cwd : '';
-      const ticketId = obj.ticketId ? String(obj.ticketId) : '';
+      const rawTaskId = obj.taskId || obj.referenceId || obj.ticketId;
+      const taskId = rawTaskId ? String(rawTaskId) : '';
+      const ticketId = taskId;
       const company = typeof obj.company === 'string' ? obj.company : '';
 
       // Automatically switch to the active pane & close any open drawer to show session in chat
@@ -721,7 +725,7 @@ export function App() {
         timestamp: new Date().toISOString(),
       };
 
-      const titlePrefix = ticketId ? `Ticket #${ticketId}` : (company ? `${company}` : 'Uzak Görev');
+      const titlePrefix = taskId ? `Görev #${taskId}` : (company ? `${company}` : 'Uzak Görev');
       const assistantMsg: ChatMessage = {
         id: 'asst_remote_' + Date.now(),
         role: 'assistant',
@@ -729,7 +733,7 @@ export function App() {
         timestamp: new Date().toISOString(),
         toolCalls: [],
         blocks: [],
-        workingStatus: ticketId ? `Ticket #${ticketId} devralındı, çalışıyor...` : 'Görev devralındı, çalışıyor...',
+        workingStatus: taskId ? `Görev #${taskId} devralındı, çalışıyor...` : 'Uzak görev devralındı, çalışıyor...',
       };
       setRunningInstances((prev) => {
         const next = new Set(prev);
@@ -741,8 +745,8 @@ export function App() {
         ...s,
         title: titlePrefix,
         cwd: taskCwd || s.cwd,
-        ticketId: ticketId || s.ticketId,
-        messages: [...s.messages, userMsg, assistantMsg],
+        taskId: taskId || s.taskId,
+        ticketId: taskId || s.ticketId,
         isWorking: true,
       }));
 
@@ -753,8 +757,8 @@ export function App() {
             ...p,
             cwd: taskCwd || p.cwd,
             title: titlePrefix,
-            ticketId: ticketId || p.ticketId,
-            messages: [...p.messages, userMsg, assistantMsg],
+            taskId: taskId || p.taskId,
+            ticketId: taskId || p.ticketId,
             attachedFiles: [],
             isWorking: true,
           };
@@ -1064,6 +1068,7 @@ export function App() {
         isWorking: currentPane.isWorking,
         fullSessionMessages: currentPane.fullSessionMessages,
         displayedMessageCount: currentPane.displayedMessageCount,
+        taskId: currentPane.taskId,
         ticketId: currentPane.ticketId,
       });
 
@@ -1098,6 +1103,7 @@ export function App() {
                 isWorking: existing.isWorking,
                 fullSessionMessages: existing.fullSessionMessages,
                 displayedMessageCount: existing.displayedMessageCount,
+                taskId: existing.taskId,
                 ticketId: existing.ticketId,
               }
             : p
@@ -1193,6 +1199,7 @@ export function App() {
         isWorking: currentPane.isWorking,
         fullSessionMessages: currentPane.fullSessionMessages,
         displayedMessageCount: currentPane.displayedMessageCount,
+        taskId: currentPane.taskId,
         ticketId: currentPane.ticketId,
       });
 
@@ -1504,8 +1511,8 @@ export function App() {
                   }}
                   onAddSystemMessage={(msg) => handleAddPaneSystemMessage(pane.id, msg)}
                   onOpenDevTools={() => setActiveDrawer('devtools')}
-                  ticketId={pane.ticketId}
-                  hasMoreOlderMessages={(pane.fullSessionMessages?.length || 0) > pane.messages.length}
+                  taskId={pane.taskId || pane.ticketId}
+                  ticketId={pane.ticketId || pane.taskId}
                   totalSessionMessages={pane.fullSessionMessages?.length || pane.messages.length}
                   onLoadOlderMessages={() => handleLoadOlderMessages(pane.id)}
                 />
