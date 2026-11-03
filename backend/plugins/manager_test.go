@@ -77,6 +77,18 @@ func TestPluginLifecycleAndPersistence(t *testing.T) {
 	if !strings.Contains(multiRes.ReplyMessage, "### 3. Tablo: Yedekler") || !strings.Contains(multiRes.ReplyMessage, "Rulman") {
 		t.Errorf("Third table was lost: %s", multiRes.ReplyMessage)
 	}
+	// 2a-3. Test stripping of English tool preamble/monologue before Turkish greeting
+	preambleInput := "I have the context from previous ticket work. Now let me query the database directly to get the current active tezgah (Üretim status) count and their personnel.Good, I have the DB credentials. Let me query the database for active tezgah info.Encoding issue with Turkish chars. Let me also get a count and fix the encoding.Let me get the proper names via PHP which handles encoding better:Now I have the complete, properly encoded data. Let me also get the total summary for context:Merhaba Arif Bey,\n\nVeritabanından güncel sorgu sonucuna göre şu an 9 adet tezgah aktif (Üretim) durumundadır."
+	preambleRes := pm.DispatchTaskCompleted(ctx, &TaskResult{
+		Status: "completed",
+		Output: preambleInput,
+	})
+	if strings.Contains(preambleRes.ReplyMessage, "I have the context") || strings.Contains(preambleRes.ReplyMessage, "Encoding issue") || strings.Contains(preambleRes.ReplyMessage, "for context:") {
+		t.Errorf("English preamble should have been stripped: %s", preambleRes.ReplyMessage)
+	}
+	if !strings.Contains(preambleRes.ReplyMessage, "Merhaba Arif Bey") || !strings.Contains(preambleRes.ReplyMessage, "9 adet tezgah aktif") {
+		t.Errorf("Expected Turkish greeting and response to be preserved: %s", preambleRes.ReplyMessage)
+	}
 	// 2b. Test failure RDP warning hook formatting
 	resFail := &TaskResult{
 		Status: "failed",

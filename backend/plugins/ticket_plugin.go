@@ -1,6 +1,7 @@
 package plugins
 
 import (
+	"regexp"
 	"strings"
 	"sync"
 )
@@ -140,6 +141,54 @@ func cleanTicketAgentOutput(raw string) string {
 		return ""
 	}
 
+	// 1. Strip XML-style thinking tags: <think>...</think> or <thinking>...</thinking>
+	thinkRe := regexp.MustCompile(`(?s)^\s*<think(?:ing)?>.*?</think(?:ing)>\s*`)
+	trimmed = strings.TrimSpace(thinkRe.ReplaceAllString(trimmed, ""))
+
+	// 2. Strip explicit thinking block: "Thinking Process:\n...\n\n"
+	explicitRe := regexp.MustCompile(`(?is)^\s*(?:Thinking Process|Thought Process|Reasoning Process|Thinking):\s*\n.*?(?:\n\n(?:Response|Answer|Final Answer):\s*\n|\n---\n)`)
+	trimmed = strings.TrimSpace(explicitRe.ReplaceAllString(trimmed, ""))
+
+	// 3. Strip English tool preamble / monologue before Turkish greeting or Markdown heading/table
+	// Example: "I have the context from previous ticket work. ... for context:Merhaba Arif Bey,"
+	lowerTrimmed := strings.ToLower(trimmed)
+	if strings.HasPrefix(lowerTrimmed, "i have") ||
+		strings.HasPrefix(lowerTrimmed, "now let me") ||
+		strings.HasPrefix(lowerTrimmed, "let me") ||
+		strings.HasPrefix(lowerTrimmed, "good,") ||
+		strings.HasPrefix(lowerTrimmed, "encoding issue") ||
+		strings.HasPrefix(lowerTrimmed, "looking at") ||
+		strings.HasPrefix(lowerTrimmed, "based on") ||
+		strings.HasPrefix(lowerTrimmed, "we have") ||
+		strings.HasPrefix(lowerTrimmed, "here is the plan") {
+
+		turkishMarkers := []string{
+			"merhaba", "selamlar", "sayın", "iyi günler", "değerli",
+			"günaydın", "bilet", "sorgu sonucuna", "veritabanından",
+			"yapılan incelemede", "kontroller sağlandığında",
+		}
+		earliestIdx := -1
+		for _, marker := range turkishMarkers {
+			if idx := strings.Index(lowerTrimmed, marker); idx != -1 {
+				if earliestIdx == -1 || idx < earliestIdx {
+					earliestIdx = idx
+				}
+			}
+		}
+		if hIdx := strings.Index(trimmed, "\n#"); hIdx != -1 {
+			if earliestIdx == -1 || hIdx+1 < earliestIdx {
+				earliestIdx = hIdx + 1
+			}
+		}
+		if tIdx := strings.Index(trimmed, "\n|"); tIdx != -1 {
+			if earliestIdx == -1 || tIdx+1 < earliestIdx {
+				earliestIdx = tIdx + 1
+			}
+		}
+		if earliestIdx > 0 {
+			trimmed = strings.TrimSpace(trimmed[earliestIdx:])
+		}
+	}
 	lines := strings.Split(trimmed, "\n")
 	var cleanLines []string
 	skippingScratchpad := true

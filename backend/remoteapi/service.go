@@ -40,6 +40,9 @@ type Service struct {
 	lastPollStatus string
 	pluginManager         *plugins.PluginManager
 	activeTasksByInstance map[string]*TicketTask
+	lastCallbackTaskID    string
+	lastCallbackOutput    string
+	lastCallbackTime      time.Time
 }
 
 // NewService initializes RemoteApiService with default configuration
@@ -838,12 +841,19 @@ func (s *Service) executePolledTask(task *TicketTask) {
 func (s *Service) OnInstanceTurnComplete(instanceId string, output string, runErr error) {
 	s.mu.RLock()
 	task, ok := s.activeTasksByInstance[instanceId]
+	isPollerActive := s.isWorking
 	s.mu.RUnlock()
 	if !ok || task == nil {
 		return
 	}
 
-	// If the user entered "devam et" or another prompt, update the ticket with the latest answer!
+	// If automated polling (executePolledTask) is currently executing, it manages and sends its own callback.
+	// Do not fire a duplicate callback from the agent hook!
+	if isPollerActive {
+		return
+	}
+
+	// If the user entered "devam et" or another prompt in GUI, update the ticket with the latest answer
 	targetCwd := strings.TrimSpace(task.WorkspacePath)
 	if targetCwd == "" {
 		binInfo, _ := s.ompService.GetBinaryInfo()
@@ -873,23 +883,32 @@ func (s *Service) SyncTicketReply(instanceId string, outputText string) error {
 
 // SendTaskCompletionCallback formats the result and sends callback to the ticket server
 func (s *Service) SendTaskCompletionCallback(task *TicketTask, agentOutput string, runErr error, targetCwd string) error {
+	s.mu.Lock()
+	// Deduplicate: if the exact same output for this task was already sent within the last 15 seconds, skip!
+	taskIDStr := fmt.Sprintf("%v", task.TaskID)
+	cleanOut := strings.TrimSpace(agentOutput)
+	if taskIDStr != "" && taskIDStr != "<nil>" && taskIDStr == s.lastCallbackTaskID && cleanOut == s.lastCallbackOutput && time.Since(s.lastCallbackTime) < 15*time.Second {
+		s.mu.Unlock()
+		return nil
+	}
+	s.lastCallbackTaskID = taskIDStr
+	s.lastCallbackOutput = cleanOut
+	s.lastCallbackTime = time.Now()
+
 	callbackURL := strings.TrimSpace(task.CallbackURL)
 	if callbackURL == "" {
-		s.mu.RLock()
 		callbackURL = s.config.PollingURL
-		s.mu.RUnlock()
 	}
-	if callbackURL == "" {
-		return fmt.Errorf("callback URL tanımlanmamış")
-	}
-
-	s.mu.RLock()
 	apiKey := strings.TrimSpace(s.config.PollingApiKey)
 	if apiKey == "" {
 		apiKey = s.config.ApiKey
 	}
 	pm := s.pluginManager
-	s.mu.RUnlock()
+	s.mu.Unlock()
+
+	if callbackURL == "" {
+		return fmt.Errorf("callback URL tanımlanmamış")
+	}
 
 	finalStatus := "completed"
 	errMsg := ""

@@ -450,6 +450,7 @@ func (s *Service) ExecuteAgentWithOutput(opts AgentRunOptions) (string, error) {
 	}()
 
 	var assistantOutput strings.Builder
+	var postToolOutput strings.Builder
 	var outputMutex sync.Mutex
 	var args []string
 	args = append(args, "-p", "--mode=json", "--print-thoughts")
@@ -637,6 +638,7 @@ func (s *Service) ExecuteAgentWithOutput(opts AgentRunOptions) (string, error) {
 								if delta, ok := asstEvent["delta"].(string); ok && delta != "" {
 									outputMutex.Lock()
 									assistantOutput.WriteString(delta)
+									postToolOutput.WriteString(delta)
 									outputMutex.Unlock()
 									if s.ctx != nil {
 										runtime.EventsEmit(s.ctx, "agent:stream", map[string]interface{}{
@@ -660,6 +662,9 @@ func (s *Service) ExecuteAgentWithOutput(opts AgentRunOptions) (string, error) {
 					}
 					// 3. Tool execution lifecycle events
 					if fType == "tool_execution_start" {
+						outputMutex.Lock()
+						postToolOutput.Reset()
+						outputMutex.Unlock()
 						if s.ctx != nil {
 							frame["instanceId"] = instID
 							runtime.EventsEmit(s.ctx, "agent:tool_start", frame)
@@ -674,6 +679,9 @@ func (s *Service) ExecuteAgentWithOutput(opts AgentRunOptions) (string, error) {
 						continue
 					}
 					if fType == "tool_execution_end" {
+						outputMutex.Lock()
+						postToolOutput.Reset()
+						outputMutex.Unlock()
 						if s.ctx != nil {
 							frame["instanceId"] = instID
 							runtime.EventsEmit(s.ctx, "agent:tool_end", frame)
@@ -748,7 +756,13 @@ func (s *Service) ExecuteAgentWithOutput(opts AgentRunOptions) (string, error) {
 	}
 
 	outputMutex.Lock()
-	finalOut := strings.TrimSpace(assistantOutput.String())
+	cleanPostTool := strings.TrimSpace(postToolOutput.String())
+	var finalOut string
+	if cleanPostTool != "" {
+		finalOut = cleanPostTool
+	} else {
+		finalOut = strings.TrimSpace(assistantOutput.String())
+	}
 	outputMutex.Unlock()
 
 	s.mutex.Lock()
